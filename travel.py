@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.4"
+VERSION = "v1.0.6"
 
 st.set_page_config(
     page_title=f"旅遊哦各位～ {VERSION}",
@@ -1024,24 +1024,11 @@ with tab1:
                 key="input_note"
             )
 
-            label = "💾 更新我的旅遊資料" if has_existing else "＋ 填寫我的旅遊資料"
-            if st.button(label, type="primary", use_container_width=True):
-                if total <= 0:
+            if st.button("＋ 填寫我的旅遊資料", type="primary", use_container_width=True):
+                if has_existing:
+                    st.info("ℹ️ 你已經填寫過旅遊資料，請使用下方「✏️ 修改我的資料」。")
+                elif total <= 0:
                     st.error("請至少填寫 1 位大人或小孩。")
-                elif has_existing:
-                    execute_db(
-                        """UPDATE travel_records
-                           SET adults=?, children=?, note=?, record_time=?
-                           WHERE name=?""",
-                        (
-                            int(adults), children, int(age_0_6), int(age_7_13),
-                            int(age_14_18), note.strip(),
-                            datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            user_name
-                        )
-                    )
-                    st.toast(f"✅ 已更新：{user_name}")
-                    st.rerun()
                 else:
                     execute_db(
                         """INSERT INTO travel_records
