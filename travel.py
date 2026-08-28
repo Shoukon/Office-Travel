@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.7"
+VERSION = "v1.2.0"
 GITHUB_SYNC_SUPPRESSED = False
 
 
