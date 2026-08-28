@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.9"
+VERSION = "v1.1.0.0"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1230,8 +1230,51 @@ with st.sidebar:
         st.divider()
         st.subheader("🗑️ 資料管理")
 
-        if st.button("🗑️ 清空全部旅遊資料", use_container_width=True):
-            st.session_state.confirm_reset = True
+        with st.popover("🗑️ 清空全部旅遊資料", use_container_width=True):
+            st.warning(
+                "⚠️ 此操作會清除全部旅遊資料，但不會刪除名單與旅遊地點。"
+            )
+            st.caption(
+                "清除後會同步更新 GitHub 永久備份，"
+                "之後 Reboot 不會恢復已清除的旅遊資料。"
+            )
+            if st.button(
+                "✅ 確定清除並同步 GitHub",
+                key="reset_confirm",
+                type="primary",
+                use_container_width=True,
+            ):
+                original_records = get_db("SELECT * FROM travel_records")
+                try:
+                    execute_db("DELETE FROM travel_records")
+                    if not sync_github_backup(show_error=False):
+                        raise RuntimeError("GitHub 備份同步失敗，已取消本次清除。")
+                except Exception as e:
+                    execute_db("DELETE FROM travel_records")
+                    for _, row in original_records.iterrows():
+                        cols = list(original_records.columns)
+                        vals = [row[c] for c in cols]
+                        placeholders = ",".join(["?"] * len(cols))
+                        execute_db(
+                            f"INSERT INTO travel_records ({','.join(cols)}) VALUES ({placeholders})",
+                            tuple(vals)
+                        )
+                    st.session_state.confirm_reset = False
+                    st.error(f"❌ 清除未完成：{e}")
+                else:
+                    st.session_state.confirm_reset = False
+                    sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
+                    member_count = int(
+                        get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
+                    )
+                    st.session_state["github_sync_result"] = (
+                        "success",
+                        f"🟢 **最後一次同步成功**\n\n"
+                        f"同步時間：{sync_time}（台灣時間）  \n"
+                        f"名單：{member_count} 人｜旅遊資料：0 筆"
+                    )
+                    st.toast("🗑️ 旅遊資料已清除，GitHub 備份也已更新。")
+                st.rerun()
 
         with st.expander("🗄️ 資料庫資訊"):
             records_count = get_db("SELECT COUNT(*) AS n FROM travel_records")
@@ -1252,55 +1295,6 @@ with st.sidebar:
             if diag.get("db_error"):
                 st.error(f"資料庫診斷失敗：{diag['db_error']}")
 
-        if st.session_state.confirm_reset:
-            st.warning(
-                "⚠️ 確定清空全部旅遊資料？\n\n"
-                "名單與旅遊地點會保留。清除後會同步更新 GitHub 永久備份，"
-                "之後 Reboot 不會恢復已清除的旅遊資料。"
-            )
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("✅ 確定清除並同步 GitHub", key="reset_confirm", use_container_width=True):
-                    # 先在目前資料庫完成清除，再將「空的旅遊資料」同步到 GitHub。
-                    # 若 GitHub 同步失敗，立即把原本的 records 從記憶中的備份資料還原，
-                    # 避免形成 SQLite / GitHub 不一致。
-                    original_records = get_db("SELECT * FROM travel_records")
-                    try:
-                        execute_db("DELETE FROM travel_records")
-                        if not sync_github_backup(show_error=False):
-                            raise RuntimeError("GitHub 備份同步失敗，已取消本次清除。")
-                    except Exception as e:
-                        # 恢復原本旅遊資料。
-                        execute_db("DELETE FROM travel_records")
-                        for _, row in original_records.iterrows():
-                            cols = list(original_records.columns)
-                            vals = [row[c] for c in cols]
-                            placeholders = ",".join(["?"] * len(cols))
-                            execute_db(
-                                f"INSERT INTO travel_records ({','.join(cols)}) VALUES ({placeholders})",
-                                tuple(vals)
-                            )
-                        st.session_state.confirm_reset = False
-                        st.error(f"❌ 清除未完成：{e}")
-                    else:
-                        st.session_state.confirm_reset = False
-                        sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
-                        member_count = int(
-                            get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
-                        )
-                        st.session_state["github_sync_result"] = (
-                            "success",
-                            f"🟢 **最後一次同步成功**\n\n"
-                            f"同步時間：{sync_time}（台灣時間）  \n"
-                            f"名單：{member_count} 人｜旅遊資料：0 筆"
-                        )
-                        st.toast("🗑️ 旅遊資料已清除，GitHub 備份也已更新。")
-                    st.rerun()
-
-            with c2:
-                if st.button("❌ 取消", key="reset_cancel", use_container_width=True):
-                    st.session_state.confirm_reset = False
-                    st.rerun()
     else:
         st.info("目前為一般使用者模式")
         admin_input = st.text_input(
