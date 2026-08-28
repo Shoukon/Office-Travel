@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.2"
+VERSION = "v1.1.3"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1000,6 +1000,7 @@ def edit_my_record_dialog(user_name):
             )
         )
         if affected == 1:
+            sync_github_backup(show_error=False)
             st.toast(f"✅ 已更新：{user_name}")
             st.rerun()
 
@@ -1113,6 +1114,7 @@ def edit_record_dialog(record_id):
                     record_id
                 )
             )
+            sync_github_backup(show_error=False)
             st.toast(f"✅ 已更新：{name}")
             st.rerun()
 
