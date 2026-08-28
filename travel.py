@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.7"
+VERSION = "v1.0.9.8"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1178,9 +1178,7 @@ with st.sidebar:
         _sync_result = st.session_state.get("github_sync_result")
         if _sync_result:
             _kind, _message = _sync_result
-            if _kind == "syncing":
-                st.info("⏳ 正在同步到 GitHub…")
-            elif _kind == "success":
+            if _kind == "success":
                 st.success(_message)
             else:
                 st.error(_message)
@@ -1200,8 +1198,10 @@ with st.sidebar:
             token, owner, repo, branch, path = get_github_settings()
             st.caption(f"儲存位置：{owner}/{repo}/{path}（{branch}）")
             if st.button("☁️ 立即同步目前資料", use_container_width=True):
-                # 每一次按鈕都視為一次新的同步工作，先清掉上一筆結果。
-                st.session_state["github_sync_result"] = ("syncing", "⏳ 正在同步到 GitHub…")
+                # 每一次按鈕都視為一次新的同步；完成後以「最後一次同步」
+                # 的形式保留結果與時間，避免使用者誤認上一筆訊息。
+                st.session_state["github_sync_result"] = None
+
                 if sync_github_backup(show_error=False):
                     sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
                     member_count = int(
@@ -1212,15 +1212,17 @@ with st.sidebar:
                     )
                     st.session_state["github_sync_result"] = (
                         "success",
-                        f"✅ 本次同步成功！\n\n"
+                        f"🟢 **最後一次同步成功**\n\n"
                         f"同步時間：{sync_time}（台灣時間）  \n"
                         f"名單：{member_count} 人｜旅遊資料：{record_count} 筆"
                     )
                 else:
                     st.session_state["github_sync_result"] = (
                         "error",
-                        "❌ 本次同步失敗，請查看 GitHub 設定與錯誤資訊。"
+                        "🔴 **最後一次同步失敗**\n\n"
+                        "請檢查 GitHub 設定與錯誤資訊。"
                     )
+
                 st.rerun()
         else:
             st.warning("⚠️ 尚未設定 GitHub 備份。請在 Streamlit Secrets 加入 [github] 設定。")
