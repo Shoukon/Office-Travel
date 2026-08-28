@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.5"
+VERSION = "v1.1.6"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -811,6 +811,7 @@ def manage_members_dialog():
                 move_member(member_id, -1)
                 if sync_github_backup(show_error=False):
                     set_github_sync_success_status()
+                st.session_state["reopen_manage_members"] = True
                 st.rerun()
 
         with c_down:
@@ -824,6 +825,7 @@ def manage_members_dialog():
                 move_member(member_id, 1)
                 if sync_github_backup(show_error=False):
                     set_github_sync_success_status()
+                st.session_state["reopen_manage_members"] = True
                 st.rerun()
 
         with c_edit:
@@ -1197,6 +1199,8 @@ with st.sidebar:
         st.success("🔓 管理員已登入")
 
         if st.button("👥 管理旅遊名單", type="primary", use_container_width=True):
+            manage_members_dialog()
+        elif st.session_state.pop("reopen_manage_members", False):
             manage_members_dialog()
 
         if st.button("🔒 管理員登出", use_container_width=True):
