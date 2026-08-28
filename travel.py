@@ -3,6 +3,7 @@ import pandas as pd
 import sqlite3
 import time
 import html
+from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
