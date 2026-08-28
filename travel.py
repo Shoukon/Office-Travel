@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.2.0"
+VERSION = "v1.2.1"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1445,11 +1445,10 @@ def render_stats():
         unsafe_allow_html=True
     )
 
-    a1, a2, a3, a4 = st.columns(4)
+    a1, a2, a3 = st.columns(3)
     a1.metric("0-6歲", age_0_6_total)
     a2.metric("7-13歲", age_7_13_total)
     a3.metric("14-18歲", age_14_18_total)
-    a4.metric("小孩合計", children)
 
     st.markdown(
         f'<div class="section-header header-people"><div>📋 旅遊人數明細</div><div>{total} 人</div></div>',
