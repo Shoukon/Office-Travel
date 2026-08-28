@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.8.3"
+VERSION = "v1.0.9"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -221,6 +221,15 @@ def init_db():
 
     conn.commit()
     conn.close()
+    conn = db_connect()
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(travel_records)").fetchall()]
+        if "participation_status" not in cols:
+            conn.execute("ALTER TABLE travel_records ADD COLUMN participation_status TEXT DEFAULT 'participating'")
+            conn.commit()
+    finally:
+        conn.close()
+
     return is_new_db
 
 
@@ -445,7 +454,7 @@ def export_travel_data():
         for row in cur.execute(
             """SELECT id, name, adults, children,
                       children_0_6, children_7_13, children_14_18,
-                      note, record_time
+                      note, record_time, participation_status
                FROM travel_records
                ORDER BY id"""
         ):
@@ -506,6 +515,7 @@ def import_travel_data(data):
             name, *values,
             str(item.get("note", "")),
             str(item.get("record_time", "")),
+            str(item.get("participation_status", "participating")),
         ))
 
     conn = db_connect()
@@ -523,8 +533,8 @@ def import_travel_data(data):
         cur.executemany(
             """INSERT INTO travel_records
                (name, adults, children, children_0_6, children_7_13,
-                children_14_18, note, record_time)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                children_14_18, note, record_time, participation_status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             record_rows,
         )
 
@@ -596,6 +606,12 @@ def get_db_diagnostics():
         result["secret_members"] = 0
 
     return result
+
+
+def get_not_participating_count():
+    return int(execute_scalar(
+        "SELECT COUNT(*) FROM travel_records WHERE participation_status='not_participating'"
+    ) or 0)
 
 
 def get_location():
@@ -865,6 +881,15 @@ def edit_my_record_dialog(user_name):
         return
 
     row = current.iloc[0]
+    current_status = str(row.get("participation_status", "participating") or "participating")
+
+    participation = st.radio(
+        "參加狀態",
+        ["參加", "不參加"],
+        index=0 if current_status == "participating" else 1,
+        horizontal=True,
+        key="my_edit_participation_status"
+    )
 
     adults = st.number_input(
         "👨 大人",
@@ -905,6 +930,12 @@ def edit_my_record_dialog(user_name):
             key="my_edit_14_18"
         )
 
+    if participation == "不參加":
+        adults = 0
+        age_0_6 = 0
+        age_7_13 = 0
+        age_14_18 = 0
+
     children = int(age_0_6) + int(age_7_13) + int(age_14_18)
     st.caption(f"🧒 小孩合計：{children} 人")
 
@@ -919,14 +950,14 @@ def edit_my_record_dialog(user_name):
     st.caption(f"👥 總人數：{total} 人")
 
     if st.button("💾 儲存我的修改", type="primary", use_container_width=True):
-        if total <= 0:
+        if total <= 0 and participation == "參加":
             st.error("請至少填寫 1 位大人或小孩。")
             return
 
         affected = execute_db(
             """UPDATE travel_records
                SET adults=?, children=?, children_0_6=?, children_7_13=?,
-                   children_14_18=?, note=?, record_time=?
+                   children_14_18=?, note=?, participation_status=?, record_time=?
                WHERE name=?""",
             (
                 int(adults),
@@ -935,6 +966,7 @@ def edit_my_record_dialog(user_name):
                 int(age_7_13),
                 int(age_14_18),
                 note.strip(),
+                "participating" if participation == "參加" else "not_participating",
                 taiwan_now().strftime("%Y-%m-%d %H:%M"),
                 user_name
             )
@@ -960,6 +992,15 @@ def edit_record_dialog(record_id):
 
     row = current.iloc[0]
     name = str(row["name"])
+    current_status = str(row.get("participation_status", "participating") or "participating")
+
+    participation = st.radio(
+        "參加狀態",
+        ["參加", "不參加"],
+        index=0 if current_status == "participating" else 1,
+        horizontal=True,
+        key=f"admin_edit_participation_{record_id}"
+    )
 
     adults = st.number_input(
         "👨 大人",
@@ -1000,6 +1041,12 @@ def edit_record_dialog(record_id):
             key=f"admin_edit_14_18_{record_id}"
         )
 
+    if participation == "不參加":
+        adults = 0
+        age_0_6 = 0
+        age_7_13 = 0
+        age_14_18 = 0
+
     children = int(age_0_6) + int(age_7_13) + int(age_14_18)
     st.caption(f"🧒 小孩合計：{children} 人")
 
@@ -1014,13 +1061,13 @@ def edit_record_dialog(record_id):
     st.caption(f"👥 總人數：{total} 人")
 
     if st.button("💾 儲存修改", type="primary", use_container_width=True):
-        if total <= 0:
+        if total <= 0 and participation == "參加":
             st.error("請至少填寫 1 位大人或小孩。")
         else:
             execute_db(
                 """UPDATE travel_records
                    SET adults=?, children=?, children_0_6=?, children_7_13=?,
-                       children_14_18=?, note=?, record_time=?
+                       children_14_18=?, note=?, participation_status=?, record_time=?
                    WHERE id=?""",
                 (
                     int(adults),
@@ -1029,6 +1076,7 @@ def edit_record_dialog(record_id):
                     int(age_7_13),
                     int(age_14_18),
                     note.strip(),
+                    "participating" if participation == "參加" else "not_participating",
                     taiwan_now().strftime("%Y-%m-%d %H:%M"),
                     record_id
                 )
@@ -1221,11 +1269,15 @@ def render_stats():
     age_14_18_total = int(df["children_14_18"].sum())
     children = age_0_6_total + age_7_13_total + age_14_18_total
     total = adults + children
+    not_participating = int(
+        (df.get("participation_status", "participating") == "not_participating").sum()
+    )
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.markdown(f'<div class="section-header header-adult"><div>👨 大人</div><div>{adults} 人</div></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="section-header header-child"><div>🧒 小孩</div><div>{children} 人</div></div>', unsafe_allow_html=True)
     c3.markdown(f'<div class="section-header header-total"><div>👥 總人數</div><div>{total} 人</div></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="section-header header-people"><div>🚫 不參加</div><div>{not_participating} 人</div></div>', unsafe_allow_html=True)
 
     st.markdown(
         '<div class="section-header header-people">'
@@ -1251,6 +1303,7 @@ def render_stats():
         adult = int(row["adults"])
         child = int(row["children"])
         person_total = adult + child
+        status = str(row.get("participation_status", "participating") or "participating")
         note = html.escape(str(row["note"] or "").strip())
         person_0_6 = int(row.get("children_0_6", 0))
         person_7_13 = int(row.get("children_7_13", 0))
@@ -1269,6 +1322,15 @@ def render_stats():
             c_edit = c_delete = None
 
         with c_info:
+            if status == "not_participating":
+                st.markdown(
+                    f'<div class="list-row"><div class="list-col-left">'
+                    f'<div class="list-title-group">'
+                    f'<span class="list-name">👤 {name}</span>'
+                    f'<span class="list-qty">🚫 不參加</span>'
+                    f'</div></div></div>',
+                    unsafe_allow_html=True
+                )
             age_parts = []
             if person_0_6:
                 age_parts.append(f"0-6歲 × {person_0_6}")
@@ -1278,14 +1340,15 @@ def render_stats():
                 age_parts.append(f"14-18歲 × {person_14_18}")
             age_html = f'<div class="custom-text">🧒 {"　".join(age_parts)}</div>' if age_parts else ""
             note_html = f'<div class="custom-text">📝 {note}</div>' if note else ""
-            st.markdown(
-                f'<div class="list-row"><div class="list-col-left">'
-                f'<div class="list-title-group">'
-                f'<span class="list-name">👤 {name}</span>'
-                f'<span class="list-qty">{"　".join(parts)}</span>'
-                f'</div>{age_html}{note_html}</div></div>',
-                unsafe_allow_html=True
-            )
+            if status == "participating":
+                st.markdown(
+                    f'<div class="list-row"><div class="list-col-left">'
+                    f'<div class="list-title-group">'
+                    f'<span class="list-name">👤 {name}</span>'
+                    f'<span class="list-qty">{"　".join(parts)}</span>'
+                    f'</div>{age_html}{note_html}</div></div>',
+                    unsafe_allow_html=True
+                )
 
         with c_total:
             st.markdown(
@@ -1353,12 +1416,14 @@ with tab1:
 
             if has_existing:
                 row = existing.iloc[0]
+                current_status = str(row.get("participation_status", "participating") or "participating")
                 current_adults = int(row["adults"])
                 current_0_6 = int(row.get("children_0_6", 0))
                 current_7_13 = int(row.get("children_7_13", 0))
                 current_14_18 = int(row.get("children_14_18", 0))
                 current_note = str(row["note"] or "")
             else:
+                current_status = "participating"
                 current_adults = 1
                 current_0_6 = 0
                 current_7_13 = 0
@@ -1371,6 +1436,14 @@ with tab1:
                 f'<div class="section-header header-people">'
                 f'<div>📍 {title}</div><div>同行人數</div></div>',
                 unsafe_allow_html=True
+            )
+
+            participation = st.radio(
+                "參加狀態",
+                ["參加", "不參加"],
+                index=0 if current_status == "participating" else 1,
+                horizontal=True,
+                key="input_participation_status"
             )
 
             st.markdown("### 👨 大人")
@@ -1413,6 +1486,12 @@ with tab1:
                     key="input_child_14_18"
                 )
 
+            if participation == "不參加":
+                adults = 0
+                age_0_6 = 0
+                age_7_13 = 0
+                age_14_18 = 0
+
             children = int(age_0_6) + int(age_7_13) + int(age_14_18)
             st.caption(f"🧒 小孩合計：{children} 人")
 
@@ -1441,12 +1520,13 @@ with tab1:
                     execute_db(
                         """INSERT INTO travel_records
                            (name, adults, children, children_0_6, children_7_13,
-                            children_14_18, note, record_time)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            children_14_18, note, record_time, participation_status)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             user_name, int(adults), children, int(age_0_6),
                             int(age_7_13), int(age_14_18), note.strip(),
-                            taiwan_now().strftime("%Y-%m-%d %H:%M")
+                            taiwan_now().strftime("%Y-%m-%d %H:%M"),
+                            "participating" if participation == "參加" else "not_participating"
                         )
                     )
                     st.toast(f"✅ 已完成填寫：{user_name}")
@@ -1466,6 +1546,8 @@ with tab1:
                 )
 
                 summary = []
+                if str(row.get("participation_status", "participating") or "participating") == "not_participating":
+                    summary.append("🚫 不參加")
                 if int(row["adults"]):
                     summary.append(f"👨 大人 × {int(row['adults'])}")
                 if int(row["children"]):
