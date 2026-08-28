@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import pandas as pd
 import sqlite3
 import time
@@ -7,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.6"
+VERSION = "v1.0.6.1"
 
 st.set_page_config(
     page_title=f"旅遊哦各位～ {VERSION}",
@@ -202,6 +203,126 @@ def init_db():
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def export_travel_data():
+    """Export all persistent travel data to a JSON-compatible dict."""
+    data = {
+        "format": "office-travel-backup",
+        "version": "1.0.7",
+        "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "travel_location": get_location(),
+        "members": [],
+        "records": [],
+    }
+
+    with db_connect() as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        for row in cur.execute(
+            "SELECT id, name, sort_order FROM travel_members ORDER BY sort_order, id"
+        ):
+            data["members"].append(dict(row))
+
+        for row in cur.execute(
+            """SELECT id, name, adults, children,
+                      children_0_6, children_7_13, children_14_18,
+                      note, record_time
+               FROM travel_records
+               ORDER BY id"""
+        ):
+            data["records"].append(dict(row))
+
+    return data
+
+
+def import_travel_data(data):
+    """Replace current travel data with a validated backup."""
+    if not isinstance(data, dict):
+        raise ValueError("備份檔格式錯誤。")
+
+    if data.get("format") != "office-travel-backup":
+        raise ValueError("不是旅遊系統的備份檔。")
+
+    members = data.get("members")
+    records = data.get("records")
+    location = data.get("travel_location", "")
+
+    if not isinstance(members, list) or not isinstance(records, list):
+        raise ValueError("備份檔缺少名單或旅遊資料。")
+
+    # Validate all records before changing the database.
+    member_rows = []
+    member_names = set()
+    for item in members:
+        if not isinstance(item, dict):
+            raise ValueError("名單資料格式錯誤。")
+        name = str(item.get("name", "")).strip()
+        if not name or name in member_names:
+            raise ValueError("名單包含空白或重複姓名。")
+        member_names.add(name)
+        sort_order = int(item.get("sort_order", len(member_rows)))
+        member_rows.append((name, sort_order))
+
+    record_rows = []
+    record_names = set()
+    for item in records:
+        if not isinstance(item, dict):
+            raise ValueError("旅遊資料格式錯誤。")
+        name = str(item.get("name", "")).strip()
+        if not name or name in record_names:
+            raise ValueError("旅遊資料包含空白或重複姓名。")
+        record_names.add(name)
+
+        values = (
+            int(item.get("adults", 0)),
+            int(item.get("children", 0)),
+            int(item.get("children_0_6", 0)),
+            int(item.get("children_7_13", 0)),
+            int(item.get("children_14_18", 0)),
+        )
+        if any(v < 0 for v in values):
+            raise ValueError("人數不能為負數。")
+
+        record_rows.append((
+            name, *values,
+            str(item.get("note", "")),
+            str(item.get("record_time", "")),
+        ))
+
+    conn = db_connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM travel_records")
+        cur.execute("DELETE FROM travel_members")
+
+        cur.executemany(
+            """INSERT INTO travel_members (name, sort_order)
+               VALUES (?, ?)""",
+            member_rows,
+        )
+
+        cur.executemany(
+            """INSERT INTO travel_records
+               (name, adults, children, children_0_6, children_7_13,
+                children_14_18, note, record_time)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            record_rows,
+        )
+
+        cur.execute(
+            """UPDATE travel_config
+               SET config_value=?
+               WHERE config_key='travel_location'""",
+            (str(location).strip(),),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_admin_password():
     try:
         return str(st.secrets["admin"]["password"]).strip()
@@ -728,6 +849,41 @@ with st.sidebar:
             st.session_state.admin_logged_in = False
             st.session_state.confirm_reset = False
             st.rerun()
+
+        st.divider()
+        st.subheader("💾 資料備份")
+
+        backup_data = export_travel_data()
+        backup_json = json.dumps(
+            backup_data, ensure_ascii=False, indent=2
+        ).encode("utf-8")
+
+        st.download_button(
+            "📥 匯出旅遊資料",
+            data=backup_json,
+            file_name=f"office_travel_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+        uploaded_backup = st.file_uploader(
+            "📤 匯入旅遊資料",
+            type=["json"],
+            key="travel_backup_upload",
+            help="匯入後會以備份檔內容取代目前的名單、旅遊資料與旅遊地點。",
+        )
+
+        if uploaded_backup is not None:
+            st.warning("⚠️ 匯入會取代目前的名單、旅遊資料與旅遊地點。請確認你上傳的是正確備份。")
+            if st.button("✅ 確定匯入此備份", key="confirm_import_backup", use_container_width=True):
+                try:
+                    imported = json.loads(uploaded_backup.getvalue().decode("utf-8"))
+                    import_travel_data(imported)
+                    st.session_state.pop("travel_backup_upload", None)
+                    st.toast("✅ 旅遊資料匯入成功！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 匯入失敗：{e}")
 
         st.divider()
         st.subheader("🗑️ 資料管理")
