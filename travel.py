@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.2"
+VERSION = "v1.0.9.3"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1409,17 +1409,37 @@ with tab1:
                         label_visibility="collapsed"
                     )
                     if selected:
-                        # 使用者切換時清除目前表單 widget 的暫存值，
-                        # 讓下一位使用者重新從自己的 SQLite 資料載入。
-                        for key in (
-                            "input_participation_status",
-                            "input_adults",
-                            "input_child_0_6",
-                            "input_child_7_13",
-                            "input_child_14_18",
-                            "input_note",
-                        ):
-                            st.session_state.pop(key, None)
+                        # 使用者切換時，不能只清除 widget state。
+                        # Streamlit 的 widget 若仍保留同一個 key，value= 不一定會覆蓋
+                        # session_state，因此要直接把「新使用者自己的資料」寫入各 widget key。
+                        selected_row = get_db(
+                            """SELECT adults, children_0_6, children_7_13,
+                                      children_14_18, note, participation_status
+                               FROM travel_records
+                               WHERE name=? LIMIT 1""",
+                            (selected,)
+                        )
+
+                        if not selected_row.empty:
+                            row = selected_row.iloc[0]
+                            st.session_state["input_participation_status"] = (
+                                "參加"
+                                if str(row.get("participation_status", "participating") or "participating") == "participating"
+                                else "不參加"
+                            )
+                            st.session_state["input_adults"] = int(row.get("adults", 0) or 0)
+                            st.session_state["input_child_0_6"] = int(row.get("children_0_6", 0) or 0)
+                            st.session_state["input_child_7_13"] = int(row.get("children_7_13", 0) or 0)
+                            st.session_state["input_child_14_18"] = int(row.get("children_14_18", 0) or 0)
+                            st.session_state["input_note"] = str(row.get("note", "") or "")
+                        else:
+                            # 尚未填寫過的使用者，載入乾淨的預設值。
+                            st.session_state["input_participation_status"] = "參加"
+                            st.session_state["input_adults"] = 1
+                            st.session_state["input_child_0_6"] = 0
+                            st.session_state["input_child_7_13"] = 0
+                            st.session_state["input_child_14_18"] = 0
+                            st.session_state["input_note"] = ""
 
                         st.session_state.user_name = selected
                         st.rerun()
