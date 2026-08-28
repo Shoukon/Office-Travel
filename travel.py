@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.5"
+VERSION = "v1.0.9.6"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1198,8 +1198,16 @@ with st.sidebar:
             token, owner, repo, branch, path = get_github_settings()
             st.caption(f"儲存位置：{owner}/{repo}/{path}（{branch}）")
             if st.button("☁️ 立即同步目前資料", use_container_width=True):
+                # 先清除上一筆結果，再執行同步。
+                st.session_state["github_sync_result"] = None
                 if sync_github_backup(show_error=True):
-                    st.success("✅ 已同步到 GitHub。")
+                    # 成功訊息先寫入 session_state，再 rerun。
+                    # 重新執行後由上方的 persistent status 區塊顯示，
+                    # 因此不會再因 st.rerun() 而一閃即逝。
+                    st.session_state["github_sync_result"] = (
+                        "success",
+                        "✅ 已同步到 GitHub。"
+                    )
                     st.rerun()
         else:
             st.warning("⚠️ 尚未設定 GitHub 備份。請在 Streamlit Secrets 加入 [github] 設定。")
