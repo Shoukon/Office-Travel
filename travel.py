@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.1"
+VERSION = "v1.0.9.2"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1380,6 +1380,7 @@ def render_stats():
         st.markdown("<hr class='person-divider'>", unsafe_allow_html=True)
 
 
+# 使用者切換時清除表單狀態，避免 A 使用者的 widget 值殘留到 B 使用者。
 st.title("🚌 旅遊哦各位～")
 
 tab1, tab2 = st.tabs(["📝 填寫人數", "📊 旅遊統計"])
@@ -1408,6 +1409,18 @@ with tab1:
                         label_visibility="collapsed"
                     )
                     if selected:
+                        # 使用者切換時清除目前表單 widget 的暫存值，
+                        # 讓下一位使用者重新從自己的 SQLite 資料載入。
+                        for key in (
+                            "input_participation_status",
+                            "input_adults",
+                            "input_child_0_6",
+                            "input_child_7_13",
+                            "input_child_14_18",
+                            "input_note",
+                        ):
+                            st.session_state.pop(key, None)
+
                         st.session_state.user_name = selected
                         st.rerun()
                 choose_user()
