@@ -1,5 +1,9 @@
 import streamlit as st
 import json
+import base64
+import urllib.request
+import urllib.parse
+import urllib.error
 import pandas as pd
 import sqlite3
 import time
@@ -8,7 +12,9 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.6.1"
+VERSION = "v1.0.6.2"
+GITHUB_SYNC_SUPPRESSED = False
+
 
 st.set_page_config(
     page_title=f"旅遊哦各位～ {VERSION}",
@@ -129,8 +135,15 @@ def execute_db(query, params=()):
             affected = cur.rowcount
             conn.commit()
             conn.close()
+
+            if not GITHUB_SYNC_SUPPRESSED:
+                sync_github_backup()
             return affected
         except sqlite3.OperationalError as e:
+            try:
+                conn.close()
+            except Exception:
+                pass
             if "locked" in str(e).lower():
                 time.sleep(0.1)
             else:
@@ -151,6 +164,12 @@ def get_db(query, params=()):
 def init_db():
     conn = db_connect()
     cur = conn.cursor()
+    existing_tables = {
+        row[0] for row in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('travel_members','travel_records','travel_config')"
+        ).fetchall()
+    }
+    is_new_db = not existing_tables
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS travel_members (
@@ -200,14 +219,126 @@ def init_db():
 
     conn.commit()
     conn.close()
+    return is_new_db
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+def get_github_settings():
+    try:
+        cfg = st.secrets.get("github", {})
+        token = str(cfg.get("token", "")).strip()
+        owner = str(cfg.get("owner", "")).strip()
+        repo = str(cfg.get("repo", "")).strip()
+        branch = str(cfg.get("branch", "main")).strip() or "main"
+        path = str(cfg.get("data_file", "travel_data.json")).strip() or "travel_data.json"
+        return token, owner, repo, branch, path
+    except Exception:
+        return "", "", "", "main", "travel_data.json"
+
+
+def github_is_configured():
+    token, owner, repo, branch, path = get_github_settings()
+    return bool(token and owner and repo)
+
+
+def github_request(method, url, token, payload=None):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "office-travel-streamlit",
+    }
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def github_get_backup():
+    token, owner, repo, branch, path = get_github_settings()
+    if not (token and owner and repo):
+        return None, None
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={urllib.parse.quote(branch, safe='')}"
+    try:
+        result = github_request("GET", url, token)
+        raw = base64.b64decode(result.get("content", "").replace("\n", ""))
+        return json.loads(raw.decode("utf-8")), result.get("sha")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, None
+        raise
+
+
+def github_put_backup(data):
+    token, owner, repo, branch, path = get_github_settings()
+    if not (token and owner and repo):
+        return False, "尚未設定 GitHub Secrets。"
+
+    existing, sha = github_get_backup()
+    raw = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    payload = {
+        "message": f"Update travel data {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "content": base64.b64encode(raw).decode("ascii"),
+        "branch": branch,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+    try:
+        github_request("PUT", url, token, payload)
+        return True, ""
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        if e.code == 409:
+            return False, "GitHub 備份發生版本衝突，請稍後再試。"
+        return False, f"GitHub API 錯誤 {e.code}：{body[:300]}"
+    except Exception as e:
+        return False, str(e)
+
+
+def sync_github_backup(show_error=False):
+    if not github_is_configured():
+        return False
+    try:
+        data = export_travel_data()
+        ok, message = github_put_backup(data)
+        if not ok and show_error:
+            st.error(f"⚠️ GitHub 備份同步失敗：{message}")
+        return ok
+    except Exception as e:
+        if show_error:
+            st.error(f"⚠️ GitHub 備份同步失敗：{e}")
+        return False
+
+
+def restore_from_github_if_new_db(is_new_db):
+    if not is_new_db or not github_is_configured():
+        return False
+
+    global GITHUB_SYNC_SUPPRESSED
+    try:
+        backup, _ = github_get_backup()
+        if not backup:
+            return False
+        GITHUB_SYNC_SUPPRESSED = True
+        import_travel_data(backup)
+        return True
+    except Exception as e:
+        st.warning(f"⚠️ 找到 GitHub 備份，但自動還原失敗：{e}")
+        return False
+    finally:
+        GITHUB_SYNC_SUPPRESSED = False
+
+
 def export_travel_data():
     """Export all persistent travel data to a JSON-compatible dict."""
     data = {
         "format": "office-travel-backup",
-        "version": "1.0.7",
+        "version": "1.0.8",
         "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "travel_location": get_location(),
         "members": [],
@@ -423,8 +554,12 @@ def seed_members_from_secrets_once():
         )
 
 
-init_db()
-seed_members_from_secrets_once()
+is_new_db = init_db()
+restored_from_github = restore_from_github_if_new_db(is_new_db)
+if not restored_from_github:
+    seed_members_from_secrets_once()
+    if is_new_db and github_is_configured():
+        sync_github_backup(show_error=False)
 
 if "user_name" not in st.session_state:
     st.session_state.user_name = None
@@ -878,12 +1013,29 @@ with st.sidebar:
             if st.button("✅ 確定匯入此備份", key="confirm_import_backup", use_container_width=True):
                 try:
                     imported = json.loads(uploaded_backup.getvalue().decode("utf-8"))
-                    import_travel_data(imported)
+                    GITHUB_SYNC_SUPPRESSED = True
+                    try:
+                        import_travel_data(imported)
+                    finally:
+                        GITHUB_SYNC_SUPPRESSED = False
+                    sync_github_backup(show_error=True)
                     st.session_state.pop("travel_backup_upload", None)
                     st.toast("✅ 旅遊資料匯入成功！")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ 匯入失敗：{e}")
+
+        st.divider()
+        st.subheader("☁️ GitHub 永久資料")
+        if github_is_configured():
+            token, owner, repo, branch, path = get_github_settings()
+            st.caption(f"儲存位置：{owner}/{repo}/{path}（{branch}）")
+            if st.button("☁️ 立即同步目前資料", use_container_width=True):
+                if sync_github_backup(show_error=True):
+                    st.success("✅ 已同步到 GitHub。")
+                    st.rerun()
+        else:
+            st.warning("⚠️ 尚未設定 GitHub 備份。請在 Streamlit Secrets 加入 [github] 設定。")
 
         st.divider()
         st.subheader("🗑️ 資料管理")
