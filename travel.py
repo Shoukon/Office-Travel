@@ -6,9 +6,10 @@ import html
 from datetime import datetime
 
 DB_FILE = "travel.db"
+VERSION = "v1.0.5"
 
 st.set_page_config(
-    page_title="旅遊哦各位～",
+    page_title=f"旅遊哦各位～ {VERSION}",
     page_icon="🚌",
     layout="wide"
 )
@@ -850,7 +851,7 @@ def render_stats():
         st.markdown("<hr class='person-divider'>", unsafe_allow_html=True)
 
 
-st.title("🚌 旅遊哦各位～ v1.0.4")
+st.title("🚌 旅遊哦各位～")
 
 tab1, tab2 = st.tabs(["📝 填寫人數", "📊 旅遊統計"])
 
