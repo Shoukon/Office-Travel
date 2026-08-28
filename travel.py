@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.5"
+VERSION = "v1.0.4"
 
 st.set_page_config(
     page_title=f"旅遊哦各位～ {VERSION}",
@@ -142,7 +142,8 @@ def get_db(query, params=()):
     try:
         with db_connect() as conn:
             return pd.read_sql_query(query, conn, params=params)
-    except Exception:
+    except Exception as e:
+        st.error(f"⚠️ 資料庫讀取失敗：{e}")
         return pd.DataFrame()
 
 
@@ -217,6 +218,44 @@ def get_db_size():
         return Path(DB_FILE).stat().st_size
     except OSError:
         return 0
+
+def get_db_diagnostics():
+    result = {
+        "path": get_db_path(),
+        "exists": Path(DB_FILE).exists(),
+        "size": get_db_size(),
+        "travel_members": None,
+        "travel_records": None,
+        "travel_config": None,
+        "secret_members": None,
+    }
+
+    try:
+        with db_connect() as conn:
+            cur = conn.cursor()
+            for table in ("travel_members", "travel_records", "travel_config"):
+                cur.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                )
+                if cur.fetchone()[0]:
+                    cur.execute(f"SELECT COUNT(*) FROM {table}")
+                    result[table] = cur.fetchone()[0]
+                else:
+                    result[table] = "不存在"
+    except Exception as e:
+        result["db_error"] = str(e)
+
+    try:
+        settings = st.secrets.get("default_settings", {})
+        names = settings.get("colleagues", [])
+        result["secret_members"] = len(
+            [str(name).strip() for name in names if str(name).strip()]
+        )
+    except Exception:
+        result["secret_members"] = 0
+
+    return result
 
 
 def get_location():
@@ -704,6 +743,16 @@ with st.sidebar:
             st.caption(f"名單：{member_n} 人　｜　旅遊資料：{record_n} 筆")
             st.caption(f"資料庫：{get_db_path()}")
             st.caption(f"檔案大小：{get_db_size():,} bytes")
+
+            diag = get_db_diagnostics()
+            st.markdown("**🔎 資料庫診斷**")
+            st.caption(f"資料庫檔案存在：{'是' if diag['exists'] else '否'}")
+            st.caption(f"travel_members：{diag['travel_members']} 筆")
+            st.caption(f"travel_records：{diag['travel_records']} 筆")
+            st.caption(f"travel_config：{diag['travel_config']} 筆")
+            st.caption(f"Secrets 名單：{diag['secret_members']} 人")
+            if diag.get("db_error"):
+                st.error(f"資料庫診斷失敗：{diag['db_error']}")
 
         if st.session_state.confirm_reset:
             st.warning("⚠️ 確定清空全部旅遊人數資料？此動作無法復原。")
