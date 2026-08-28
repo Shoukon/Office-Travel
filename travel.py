@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.8.1"
+VERSION = "v1.0.8.2"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -257,6 +257,22 @@ def github_request(method, url, token, payload=None):
         return json.loads(response.read().decode("utf-8"))
 
 
+def test_github_encryption_key():
+    key = get_github_encryption_key()
+    if not key:
+        return False, "尚未設定 encryption_key。"
+    try:
+        f = Fernet(key)
+        test_plain = b"Office-Travel encryption test"
+        encrypted = f.encrypt(test_plain)
+        decrypted = f.decrypt(encrypted)
+        if decrypted != test_plain:
+            return False, "加密金鑰測試失敗。"
+        return True, "加密金鑰正常，可以正常加密／解密。"
+    except Exception as e:
+        return False, f"encryption_key 格式錯誤：{e}"
+
+
 def get_github_encryption_key():
     try:
         key = str(st.secrets.get("github", {}).get("encryption_key", "")).strip()
@@ -303,7 +319,12 @@ def github_get_backup():
     try:
         result = github_request("GET", url, token)
         encoded = result.get("content", "").replace("\n", "")
+        if not encoded.strip():
+            return None, result.get("sha")
+
         raw_text = base64.b64decode(encoded).decode("utf-8")
+        if not raw_text.strip():
+            return None, result.get("sha")
 
         # Migration path: the first v1.0.8 test created a plaintext JSON backup.
         # Do not try to import it as an encrypted backup. Return no backup data
@@ -1082,6 +1103,18 @@ with st.sidebar:
 
         st.divider()
         st.subheader("☁️ GitHub 永久資料")
+
+        key_ok, key_message = test_github_encryption_key()
+        if key_ok:
+            st.caption("🔐 encryption_key：正常")
+        else:
+            st.error(f"🔐 encryption_key：{key_message}")
+
+        if st.button("🔎 測試加密金鑰", key="test_github_encryption_key", use_container_width=True):
+            if key_ok:
+                st.success("✅ 加密金鑰正常，可以正常加密／解密。")
+            else:
+                st.error(f"❌ {key_message}")
         if github_is_configured():
             token, owner, repo, branch, path = get_github_settings()
             st.caption(f"儲存位置：{owner}/{repo}/{path}（{branch}）")
