@@ -1,5 +1,6 @@
 import streamlit as st
 import json
+from cryptography.fernet import Fernet, InvalidToken
 import base64
 import urllib.request
 import urllib.parse
@@ -12,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.6.2"
+VERSION = "v1.0.8"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -237,7 +238,7 @@ def get_github_settings():
 
 def github_is_configured():
     token, owner, repo, branch, path = get_github_settings()
-    return bool(token and owner and repo)
+    return bool(token and owner and repo and get_github_encryption_key())
 
 
 def github_request(method, url, token, payload=None):
@@ -256,6 +257,35 @@ def github_request(method, url, token, payload=None):
         return json.loads(response.read().decode("utf-8"))
 
 
+def get_github_encryption_key():
+    try:
+        key = str(st.secrets.get("github", {}).get("encryption_key", "")).strip()
+        if not key:
+            return None
+        return key.encode("utf-8")
+    except Exception:
+        return None
+
+
+def encrypt_github_backup(data):
+    key = get_github_encryption_key()
+    if not key:
+        raise ValueError("尚未設定 GitHub encryption_key。")
+    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return Fernet(key).encrypt(raw).decode("ascii")
+
+
+def decrypt_github_backup(encrypted_text):
+    key = get_github_encryption_key()
+    if not key:
+        raise ValueError("尚未設定 GitHub encryption_key。")
+    try:
+        raw = Fernet(key).decrypt(encrypted_text.encode("ascii"))
+    except InvalidToken:
+        raise ValueError("GitHub 備份無法解密：加密金鑰不正確或備份內容已損壞。")
+    return json.loads(raw.decode("utf-8"))
+
+
 def github_get_backup():
     token, owner, repo, branch, path = get_github_settings()
     if not (token and owner and repo):
@@ -264,8 +294,9 @@ def github_get_backup():
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={urllib.parse.quote(branch, safe='')}"
     try:
         result = github_request("GET", url, token)
-        raw = base64.b64decode(result.get("content", "").replace("\n", ""))
-        return json.loads(raw.decode("utf-8")), result.get("sha")
+        encoded = result.get("content", "").replace("\n", "")
+        encrypted_text = base64.b64decode(encoded).decode("ascii")
+        return decrypt_github_backup(encrypted_text), result.get("sha")
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None, None
@@ -277,11 +308,11 @@ def github_put_backup(data):
     if not (token and owner and repo):
         return False, "尚未設定 GitHub Secrets。"
 
-    existing, sha = github_get_backup()
-    raw = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    _, sha = github_get_backup()
+    encrypted_text = encrypt_github_backup(data)
     payload = {
-        "message": f"Update travel data {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "content": base64.b64encode(raw).decode("ascii"),
+        "message": f"Update encrypted travel data {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "content": base64.b64encode(encrypted_text.encode("ascii")).decode("ascii"),
         "branch": branch,
     }
     if sha:
