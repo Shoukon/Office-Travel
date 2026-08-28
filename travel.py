@@ -11,9 +11,10 @@ import time
 import html
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.8.2"
+VERSION = "v1.0.8.3"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -223,6 +224,17 @@ def init_db():
     return is_new_db
 
 
+TAIWAN_TZ = ZoneInfo("Asia/Taipei")
+
+
+def taiwan_now():
+    return datetime.now(TAIWAN_TZ)
+
+
+def taiwan_now_str():
+    return taiwan_now().strftime("%Y-%m-%d %H:%M")
+
+
 def get_github_settings():
     try:
         cfg = st.secrets.get("github", {})
@@ -356,7 +368,7 @@ def github_put_backup(data):
     _, sha = github_get_backup()
     encrypted_text = encrypt_github_backup(data)
     payload = {
-        "message": f"Update encrypted travel data {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "message": f"Update encrypted travel data {taiwan_now().strftime('%Y-%m-%d %H:%M:%S')}",
         "content": base64.b64encode(encrypted_text.encode("ascii")).decode("ascii"),
         "branch": branch,
     }
@@ -415,7 +427,7 @@ def export_travel_data():
     data = {
         "format": "office-travel-backup",
         "version": "1.0.8",
-        "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "exported_at": taiwan_now().strftime("%Y-%m-%d %H:%M:%S"),
         "travel_location": get_location(),
         "members": [],
         "records": [],
@@ -923,7 +935,7 @@ def edit_my_record_dialog(user_name):
                 int(age_7_13),
                 int(age_14_18),
                 note.strip(),
-                datetime.now().strftime("%Y-%m-%d %H:%M"),
+                taiwan_now().strftime("%Y-%m-%d %H:%M"),
                 user_name
             )
         )
@@ -1017,7 +1029,7 @@ def edit_record_dialog(record_id):
                     int(age_7_13),
                     int(age_14_18),
                     note.strip(),
-                    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    taiwan_now().strftime("%Y-%m-%d %H:%M"),
                     record_id
                 )
             )
@@ -1072,7 +1084,7 @@ with st.sidebar:
         st.download_button(
             "📥 匯出旅遊資料",
             data=backup_json,
-            file_name=f"office_travel_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            file_name=f"office_travel_backup_{taiwan_now().strftime('%Y%m%d_%H%M%S')}.json",
             mime="application/json",
             use_container_width=True,
         )
@@ -1191,7 +1203,7 @@ def render_stats():
         text = f"📍 {html.escape(location)}　" if location else ""
         st.markdown(
             f'<div style="text-align:right;color:#838484;">'
-            f'{text}更新於 {datetime.now().strftime("%H:%M:%S")}</div>',
+            f'{text}更新於 {taiwan_now().strftime("%H:%M:%S")}</div>',
             unsafe_allow_html=True
         )
     with c2:
@@ -1434,7 +1446,7 @@ with tab1:
                         (
                             user_name, int(adults), children, int(age_0_6),
                             int(age_7_13), int(age_14_18), note.strip(),
-                            datetime.now().strftime("%Y-%m-%d %H:%M")
+                            taiwan_now().strftime("%Y-%m-%d %H:%M")
                         )
                     )
                     st.toast(f"✅ 已完成填寫：{user_name}")
