@@ -1388,7 +1388,7 @@ with st.sidebar:
             type="password",
             placeholder="請輸入管理員密碼"
         )
-        if st.button("🔓 登入管理員", type="primary", use_container_width=True):
+        if st.button("🔓 管理員登入", type="primary", use_container_width=True):
             if not admin_input:
                 st.error("⚠️ 請輸入管理員密碼。")
             elif not get_admin_password():
