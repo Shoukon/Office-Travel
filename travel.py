@@ -8,7 +8,7 @@ from datetime import datetime
 DB_FILE = "travel.db"
 
 st.set_page_config(
-    page_title="旅遊哦各位～ v1.0.5",
+    page_title="旅遊哦各位～",
     page_icon="🚌",
     layout="wide"
 )
