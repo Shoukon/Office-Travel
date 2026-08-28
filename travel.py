@@ -8,7 +8,7 @@ from datetime import datetime
 DB_FILE = "travel.db"
 
 st.set_page_config(
-    page_title="旅遊哦各位～ v1.0.3",
+    page_title="旅遊哦各位～ v1.0.3.1",
     page_icon="🚌",
     layout="wide"
 )
@@ -250,6 +250,36 @@ if "confirm_reset" not in st.session_state:
     st.session_state.confirm_reset = False
 
 
+
+def move_member(member_id, direction):
+    members = get_members()
+    if members.empty:
+        return
+
+    ids = members["id"].astype(int).tolist()
+    try:
+        index = ids.index(int(member_id))
+    except ValueError:
+        return
+
+    target_index = index + direction
+    if target_index < 0 or target_index >= len(ids):
+        return
+
+    current_id = ids[index]
+    target_id = ids[target_index]
+    current_order = int(members.iloc[index]["sort_order"])
+    target_order = int(members.iloc[target_index]["sort_order"])
+
+    execute_db(
+        "UPDATE travel_members SET sort_order=? WHERE id=?",
+        (target_order, current_id)
+    )
+    execute_db(
+        "UPDATE travel_members SET sort_order=? WHERE id=?",
+        (current_order, target_id)
+    )
+
 @st.dialog("👥 管理旅遊名單", width="large")
 def manage_members_dialog():
     if not st.session_state.admin_logged_in:
@@ -270,18 +300,62 @@ def manage_members_dialog():
 
     st.write(f"目前共 {len(get_members())} 人")
 
+    all_members = get_members()
+    all_ids = all_members["id"].astype(int).tolist() if not all_members.empty else []
+
     for _, row in members.iterrows():
         member_id = int(row["id"])
         name = str(row["name"])
+        position = all_ids.index(member_id) if member_id in all_ids else 0
+        is_first = position == 0
+        is_last = position == len(all_ids) - 1
 
-        c_name, c_edit, c_delete = st.columns([7, 1, 1], vertical_alignment="center")
+        c_name, c_up, c_down, c_edit, c_delete = st.columns(
+            [6, 0.7, 0.7, 0.8, 0.8],
+            vertical_alignment="center"
+        )
+
         with c_name:
             st.markdown(f"**👤 {html.escape(name)}**")
+
+        with c_up:
+            if st.button(
+                "⬆️",
+                key=f"member_up_{member_id}",
+                disabled=is_first,
+                help="往上移",
+                use_container_width=True
+            ):
+                move_member(member_id, -1)
+                st.rerun()
+
+        with c_down:
+            if st.button(
+                "⬇️",
+                key=f"member_down_{member_id}",
+                disabled=is_last,
+                help="往下移",
+                use_container_width=True
+            ):
+                move_member(member_id, 1)
+                st.rerun()
+
         with c_edit:
-            if st.button("✏️", key=f"member_edit_{member_id}", use_container_width=True):
+            if st.button(
+                "✏️",
+                key=f"member_edit_{member_id}",
+                help="修改姓名",
+                use_container_width=True
+            ):
                 st.session_state["editing_member_id"] = member_id
+
         with c_delete:
-            if st.button("🗑️", key=f"member_delete_{member_id}", use_container_width=True):
+            if st.button(
+                "🗑️",
+                key=f"member_delete_{member_id}",
+                help="移除人員",
+                use_container_width=True
+            ):
                 st.session_state["deleting_member_id"] = member_id
 
         if st.session_state.get("editing_member_id") == member_id:
