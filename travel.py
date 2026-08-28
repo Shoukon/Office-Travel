@@ -20,7 +20,7 @@ DB_FILE = "travel.db"
 #    保留「點餐哦各位～ v3.5.2」的整體視覺風格
 # ==========================================
 st.set_page_config(
-    page_title="旅遊哦各位～ v1.0",
+    page_title="旅遊哦各位～ v1.0.1",
     page_icon="🚌",
     layout="wide"
 )
