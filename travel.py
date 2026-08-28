@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.3"
+VERSION = "v1.1.4"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -400,6 +400,22 @@ def github_put_backup(data):
         return False, str(e)
 
 
+def set_github_sync_success_status():
+    sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
+    member_count = int(
+        get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
+    )
+    record_count = int(
+        get_db("SELECT COUNT(*) AS n FROM travel_records").iloc[0]["n"]
+    )
+    st.session_state["github_sync_result"] = (
+        "success",
+        f"🟢 **最後一次同步成功**\\n\\n"
+        f"同步時間：{sync_time}（台灣時間）  \\n"
+        f"名單：{member_count} 人｜旅遊資料：{record_count} 筆"
+    )
+
+
 def sync_github_backup(show_error=False):
     if not github_is_configured():
         return False
@@ -769,7 +785,8 @@ def manage_members_dialog():
                 use_container_width=True
             ):
                 move_member(member_id, -1)
-                sync_github_backup(show_error=False)
+                if sync_github_backup(show_error=False):
+                    set_github_sync_success_status()
                 st.rerun()
 
         with c_down:
@@ -781,7 +798,8 @@ def manage_members_dialog():
                 use_container_width=True
             ):
                 move_member(member_id, 1)
-                sync_github_backup(show_error=False)
+                if sync_github_backup(show_error=False):
+                    set_github_sync_success_status()
                 st.rerun()
 
         with c_edit:
@@ -835,7 +853,8 @@ def manage_members_dialog():
                                 "UPDATE travel_records SET name=? WHERE name=?",
                                 (new_name, old_name)
                             )
-                        sync_github_backup(show_error=False)
+                        if sync_github_backup(show_error=False):
+                            set_github_sync_success_status()
                         st.session_state.pop("editing_member_id", None)
                         st.rerun()
             with c2:
@@ -849,7 +868,8 @@ def manage_members_dialog():
             with c1:
                 if st.button("🗑️ 確定移除", key=f"member_confirm_delete_{member_id}", type="primary", use_container_width=True):
                     execute_db("DELETE FROM travel_members WHERE id=?", (member_id,))
-                    sync_github_backup(show_error=False)
+                    if sync_github_backup(show_error=False):
+                        set_github_sync_success_status()
                     st.session_state.pop("deleting_member_id", None)
                     if st.session_state.user_name == name:
                         st.session_state.user_name = None
@@ -888,7 +908,8 @@ def manage_members_dialog():
                     "INSERT INTO travel_members (name, sort_order) VALUES (?, ?)",
                     (new_member, order)
                 )
-                sync_github_backup(show_error=False)
+                if sync_github_backup(show_error=False):
+                    set_github_sync_success_status()
                 st.toast(f"✅ 已新增：{new_member}")
                 st.rerun()
 
@@ -1000,7 +1021,8 @@ def edit_my_record_dialog(user_name):
             )
         )
         if affected == 1:
-            sync_github_backup(show_error=False)
+            if sync_github_backup(show_error=False):
+                set_github_sync_success_status()
             st.toast(f"✅ 已更新：{user_name}")
             st.rerun()
 
@@ -1114,7 +1136,8 @@ def edit_record_dialog(record_id):
                     record_id
                 )
             )
-            sync_github_backup(show_error=False)
+            if sync_github_backup(show_error=False):
+                set_github_sync_success_status()
             st.toast(f"✅ 已更新：{name}")
             st.rerun()
 
@@ -1136,7 +1159,8 @@ with st.sidebar:
                 st.error("請輸入旅遊地點。")
             else:
                 save_location(location_input)
-                sync_github_backup(show_error=False)
+                if sync_github_backup(show_error=False):
+                    set_github_sync_success_status()
                 st.toast("✅ 旅遊地點已儲存！")
                 st.rerun()
     else:
@@ -1242,19 +1266,7 @@ with st.sidebar:
                 st.session_state["github_sync_result"] = None
 
                 if sync_github_backup(show_error=False):
-                    sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
-                    member_count = int(
-                        get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
-                    )
-                    record_count = int(
-                        get_db("SELECT COUNT(*) AS n FROM travel_records").iloc[0]["n"]
-                    )
-                    st.session_state["github_sync_result"] = (
-                        "success",
-                        f"🟢 **最後一次同步成功**\n\n"
-                        f"同步時間：{sync_time}（台灣時間）  \n"
-                        f"名單：{member_count} 人｜旅遊資料：{record_count} 筆"
-                    )
+                    set_github_sync_success_status()
                 else:
                     st.session_state["github_sync_result"] = (
                         "error",
@@ -1477,7 +1489,8 @@ def render_stats():
                     st.write(f"刪除 **{name}** 的旅遊資料？")
                     if st.button("⭕ 確認刪除", key=f"record_delete_confirm_{record_id}", type="primary", use_container_width=True):
                         execute_db("DELETE FROM travel_records WHERE id=?", (record_id,))
-                        sync_github_backup(show_error=False)
+                        if sync_github_backup(show_error=False):
+                            set_github_sync_success_status()
                         st.toast(f"🗑️ 已刪除：{name}")
                         st.rerun(scope="fragment")
 
