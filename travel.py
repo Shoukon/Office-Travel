@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.6"
+VERSION = "v1.1.7"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -882,6 +882,7 @@ def manage_members_dialog():
                         if sync_github_backup(show_error=False):
                             set_github_sync_success_status()
                         st.session_state.pop("editing_member_id", None)
+                        st.session_state["reopen_manage_members"] = True
                         st.rerun()
             with c2:
                 if st.button("取消", key=f"member_cancel_{member_id}", use_container_width=True):
@@ -899,6 +900,7 @@ def manage_members_dialog():
                     st.session_state.pop("deleting_member_id", None)
                     if st.session_state.user_name == name:
                         st.session_state.user_name = None
+                    st.session_state["reopen_manage_members"] = True
                     st.rerun()
             with c2:
                 if st.button("取消", key=f"member_cancel_delete_{member_id}", use_container_width=True):
@@ -937,8 +939,13 @@ def manage_members_dialog():
                 if sync_github_backup(show_error=False):
                     set_github_sync_success_status()
                 st.toast(f"✅ 已新增：{new_member}")
+                st.session_state["reopen_manage_members"] = True
                 st.rerun()
 
+    st.divider()
+    if st.button("✖️ 完成管理／關閉", key="close_manage_members", use_container_width=True):
+        st.session_state["reopen_manage_members"] = False
+        st.rerun()
 
 
 @st.dialog("✏️ 修改我的旅遊資料")
