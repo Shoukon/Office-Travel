@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.1"
+VERSION = "v1.1.2"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -132,27 +132,27 @@ def db_connect():
 
 
 def execute_db(query, params=()):
+    """Execute one SQLite write. GitHub backup is triggered explicitly."""
     for _ in range(5):
+        conn = None
         try:
             conn = db_connect()
             cur = conn.cursor()
             cur.execute(query, params)
             affected = cur.rowcount
             conn.commit()
-            conn.close()
-
-            if not GITHUB_SYNC_SUPPRESSED:
-                sync_github_backup()
             return affected
         except sqlite3.OperationalError as e:
-            try:
-                conn.close()
-            except Exception:
-                pass
             if "locked" in str(e).lower():
                 time.sleep(0.1)
             else:
                 raise
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     st.error("⚠️ 系統忙碌，請稍後再試。")
     return 0
 
@@ -438,7 +438,7 @@ def export_travel_data():
     """Export all persistent travel data to a JSON-compatible dict."""
     data = {
         "format": "office-travel-backup",
-        "version": "1.0.8",
+        "version": "2.0",
         "exported_at": taiwan_now().strftime("%Y-%m-%d %H:%M:%S"),
         "travel_location": get_location(),
         "members": [],
@@ -496,6 +496,7 @@ def import_travel_data(data):
 
     record_rows = []
     record_names = set()
+    member_name_set = set(member_names)
     for item in records:
         if not isinstance(item, dict):
             raise ValueError("旅遊資料格式錯誤。")
@@ -503,22 +504,37 @@ def import_travel_data(data):
         if not name or name in record_names:
             raise ValueError("旅遊資料包含空白或重複姓名。")
         record_names.add(name)
+        if name not in member_name_set:
+            raise ValueError(f"旅遊資料中的姓名「{name}」不在名單中。")
 
-        values = (
-            int(item.get("adults", 0)),
-            int(item.get("children", 0)),
-            int(item.get("children_0_6", 0)),
-            int(item.get("children_7_13", 0)),
-            int(item.get("children_14_18", 0)),
-        )
+        try:
+            adults = int(item.get("adults", 0))
+            children = int(item.get("children", 0))
+            age_0_6 = int(item.get("children_0_6", 0))
+            age_7_13 = int(item.get("children_7_13", 0))
+            age_14_18 = int(item.get("children_14_18", 0))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"「{name}」的人數資料格式錯誤。") from e
+
+        values = (adults, children, age_0_6, age_7_13, age_14_18)
         if any(v < 0 for v in values):
-            raise ValueError("人數不能為負數。")
+            raise ValueError(f"「{name}」的人數不能為負數。")
+        if children != age_0_6 + age_7_13 + age_14_18:
+            raise ValueError(f"「{name}」的小孩總數與各年齡層人數不一致。")
+
+        participation_status = str(
+            item.get("participation_status", "participating")
+        ).strip()
+        if participation_status not in ("participating", "not_participating"):
+            raise ValueError(f"「{name}」的參加狀態無效。")
+        if participation_status == "not_participating" and any(values):
+            raise ValueError(f"「{name}」設定為不參加時，人數必須全部為 0。")
 
         record_rows.append((
-            name, *values,
+            name, adults, children, age_0_6, age_7_13, age_14_18,
             str(item.get("note", "")),
             str(item.get("record_time", "")),
-            str(item.get("participation_status", "participating")),
+            participation_status,
         ))
 
     conn = db_connect()
@@ -753,6 +769,7 @@ def manage_members_dialog():
                 use_container_width=True
             ):
                 move_member(member_id, -1)
+                sync_github_backup(show_error=False)
                 st.rerun()
 
         with c_down:
@@ -764,6 +781,7 @@ def manage_members_dialog():
                 use_container_width=True
             ):
                 move_member(member_id, 1)
+                sync_github_backup(show_error=False)
                 st.rerun()
 
         with c_edit:
@@ -817,6 +835,7 @@ def manage_members_dialog():
                                 "UPDATE travel_records SET name=? WHERE name=?",
                                 (new_name, old_name)
                             )
+                        sync_github_backup(show_error=False)
                         st.session_state.pop("editing_member_id", None)
                         st.rerun()
             with c2:
@@ -830,6 +849,7 @@ def manage_members_dialog():
             with c1:
                 if st.button("🗑️ 確定移除", key=f"member_confirm_delete_{member_id}", type="primary", use_container_width=True):
                     execute_db("DELETE FROM travel_members WHERE id=?", (member_id,))
+                    sync_github_backup(show_error=False)
                     st.session_state.pop("deleting_member_id", None)
                     if st.session_state.user_name == name:
                         st.session_state.user_name = None
@@ -868,6 +888,7 @@ def manage_members_dialog():
                     "INSERT INTO travel_members (name, sort_order) VALUES (?, ?)",
                     (new_member, order)
                 )
+                sync_github_backup(show_error=False)
                 st.toast(f"✅ 已新增：{new_member}")
                 st.rerun()
 
@@ -1113,6 +1134,7 @@ with st.sidebar:
                 st.error("請輸入旅遊地點。")
             else:
                 save_location(location_input)
+                sync_github_backup(show_error=False)
                 st.toast("✅ 旅遊地點已儲存！")
                 st.rerun()
     else:
@@ -1158,19 +1180,34 @@ with st.sidebar:
         if uploaded_backup is not None:
             st.warning("⚠️ 匯入會取代目前的名單、旅遊資料與旅遊地點。請確認你上傳的是正確備份。")
             if st.button("✅ 確定匯入此備份", key="confirm_import_backup", use_container_width=True):
+                original_data = None
                 try:
                     imported = json.loads(uploaded_backup.getvalue().decode("utf-8"))
+                    original_data = export_travel_data()
+
                     GITHUB_SYNC_SUPPRESSED = True
                     try:
                         import_travel_data(imported)
                     finally:
                         GITHUB_SYNC_SUPPRESSED = False
-                    sync_github_backup(show_error=True)
+
+                    if not sync_github_backup(show_error=False):
+                        raise RuntimeError("GitHub 備份同步失敗，匯入已取消。")
+
                     st.session_state.pop("travel_backup_upload", None)
                     st.toast("✅ 旅遊資料匯入成功！")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ 匯入失敗：{e}")
+                    if original_data is not None:
+                        try:
+                            GITHUB_SYNC_SUPPRESSED = True
+                            try:
+                                import_travel_data(original_data)
+                            finally:
+                                GITHUB_SYNC_SUPPRESSED = False
+                        except Exception:
+                            pass
+                    st.error(f"❌ 匯入未完成：{e}")
 
         st.divider()
         st.subheader("☁️ GitHub 永久資料")
@@ -1438,6 +1475,7 @@ def render_stats():
                     st.write(f"刪除 **{name}** 的旅遊資料？")
                     if st.button("⭕ 確認刪除", key=f"record_delete_confirm_{record_id}", type="primary", use_container_width=True):
                         execute_db("DELETE FROM travel_records WHERE id=?", (record_id,))
+                        sync_github_backup(show_error=False)
                         st.toast(f"🗑️ 已刪除：{name}")
                         st.rerun(scope="fragment")
 
