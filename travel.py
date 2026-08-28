@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.4"
+VERSION = "v1.0.9.5"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1175,13 +1175,13 @@ with st.sidebar:
         st.divider()
         st.subheader("☁️ GitHub 永久資料")
 
-    _sync_result = st.session_state.get("github_sync_result")
-    if _sync_result:
-        _kind, _message = _sync_result
-        if _kind == "success":
-            st.success(_message)
-        else:
-            st.error(_message)
+        _sync_result = st.session_state.get("github_sync_result")
+        if _sync_result:
+            _kind, _message = _sync_result
+            if _kind == "success":
+                st.success(_message)
+            else:
+                st.error(_message)
 
         key_ok, key_message = test_github_encryption_key()
         if key_ok:
