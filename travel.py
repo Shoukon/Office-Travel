@@ -8,7 +8,7 @@ from datetime import datetime
 DB_FILE = "travel.db"
 
 st.set_page_config(
-    page_title="旅遊哦各位～ v1.0.4",
+    page_title="旅遊哦各位～ v1.0.5",
     page_icon="🚌",
     layout="wide"
 )
@@ -137,15 +137,11 @@ def execute_db(query, params=()):
 
 
 def get_db(query, params=()):
-    conn = None
     try:
-        conn = db_connect()
-        return pd.read_sql_query(query, conn, params=params)
+        with db_connect() as conn:
+            return pd.read_sql_query(query, conn, params=params)
     except Exception:
         return pd.DataFrame()
-    finally:
-        if conn:
-            conn.close()
 
 
 def init_db():
@@ -184,18 +180,6 @@ def init_db():
         if column not in columns:
             cur.execute(statement)
 
-    columns = [row[1] for row in cur.execute("PRAGMA table_info(travel_records)").fetchall()]
-    if "child_age_groups" in columns:
-        cur.execute("""
-            UPDATE travel_records
-            SET children_0_6 = 0,
-                children_7_13 = 0,
-                children_14_18 = 0
-            WHERE child_age_groups <> ''
-              AND children_0_6 = 0
-              AND children_7_13 = 0
-              AND children_14_18 = 0
-        """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS travel_config (
@@ -214,11 +198,23 @@ def init_db():
     conn.close()
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_admin_password():
     try:
         return str(st.secrets["admin"]["password"]).strip()
     except Exception:
         return ""
+
+
+def get_db_path():
+    return str(Path(DB_FILE).resolve())
+
+
+def get_db_size():
+    try:
+        return Path(DB_FILE).stat().st_size
+    except OSError:
+        return 0
 
 
 def get_location():
@@ -698,6 +694,15 @@ with st.sidebar:
         if st.button("🗑️ 清空全部旅遊資料", use_container_width=True):
             st.session_state.confirm_reset = True
 
+        with st.expander("🗄️ 資料庫資訊"):
+            records_count = get_db("SELECT COUNT(*) AS n FROM travel_records")
+            members_count = get_db("SELECT COUNT(*) AS n FROM travel_members")
+            record_n = int(records_count.iloc[0]["n"]) if not records_count.empty else 0
+            member_n = int(members_count.iloc[0]["n"]) if not members_count.empty else 0
+            st.caption(f"名單：{member_n} 人　｜　旅遊資料：{record_n} 筆")
+            st.caption(f"資料庫：{get_db_path()}")
+            st.caption(f"檔案大小：{get_db_size():,} bytes")
+
         if st.session_state.confirm_reset:
             st.warning("⚠️ 確定清空全部旅遊人數資料？此動作無法復原。")
             c1, c2 = st.columns(2)
@@ -765,7 +770,7 @@ def render_stats():
 
     st.markdown(
         '<div class="section-header header-people">'
-        '<div>🧒 小孩年齡統計</div>'
+        '<div>🧒 小孩年齡分布</div>'
         f'<div>小孩合計 {children} 人</div></div>',
         unsafe_allow_html=True
     )
