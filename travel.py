@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9.6"
+VERSION = "v1.0.9.7"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1178,7 +1178,9 @@ with st.sidebar:
         _sync_result = st.session_state.get("github_sync_result")
         if _sync_result:
             _kind, _message = _sync_result
-            if _kind == "success":
+            if _kind == "syncing":
+                st.info("⏳ 正在同步到 GitHub…")
+            elif _kind == "success":
                 st.success(_message)
             else:
                 st.error(_message)
@@ -1198,17 +1200,28 @@ with st.sidebar:
             token, owner, repo, branch, path = get_github_settings()
             st.caption(f"儲存位置：{owner}/{repo}/{path}（{branch}）")
             if st.button("☁️ 立即同步目前資料", use_container_width=True):
-                # 先清除上一筆結果，再執行同步。
-                st.session_state["github_sync_result"] = None
-                if sync_github_backup(show_error=True):
-                    # 成功訊息先寫入 session_state，再 rerun。
-                    # 重新執行後由上方的 persistent status 區塊顯示，
-                    # 因此不會再因 st.rerun() 而一閃即逝。
+                # 每一次按鈕都視為一次新的同步工作，先清掉上一筆結果。
+                st.session_state["github_sync_result"] = ("syncing", "⏳ 正在同步到 GitHub…")
+                if sync_github_backup(show_error=False):
+                    sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
+                    member_count = int(
+                        get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
+                    )
+                    record_count = int(
+                        get_db("SELECT COUNT(*) AS n FROM travel_records").iloc[0]["n"]
+                    )
                     st.session_state["github_sync_result"] = (
                         "success",
-                        "✅ 已同步到 GitHub。"
+                        f"✅ 本次同步成功！\n\n"
+                        f"同步時間：{sync_time}（台灣時間）  \n"
+                        f"名單：{member_count} 人｜旅遊資料：{record_count} 筆"
                     )
-                    st.rerun()
+                else:
+                    st.session_state["github_sync_result"] = (
+                        "error",
+                        "❌ 本次同步失敗，請查看 GitHub 設定與錯誤資訊。"
+                    )
+                st.rerun()
         else:
             st.warning("⚠️ 尚未設定 GitHub 備份。請在 Streamlit Secrets 加入 [github] 設定。")
 
