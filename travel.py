@@ -8,7 +8,7 @@ from datetime import datetime
 DB_FILE = "travel.db"
 
 st.set_page_config(
-    page_title="旅遊哦各位～ v1.0.3.2",
+    page_title="旅遊哦各位～ v1.0.4",
     page_icon="🚌",
     layout="wide"
 )
@@ -166,10 +166,36 @@ def init_db():
             name TEXT NOT NULL UNIQUE,
             adults INTEGER NOT NULL DEFAULT 0,
             children INTEGER NOT NULL DEFAULT 0,
+            children_0_6 INTEGER NOT NULL DEFAULT 0,
+            children_7_13 INTEGER NOT NULL DEFAULT 0,
+            children_14_18 INTEGER NOT NULL DEFAULT 0,
             note TEXT NOT NULL DEFAULT '',
             record_time TEXT NOT NULL
         )
     """)
+
+    columns = [row[1] for row in cur.execute("PRAGMA table_info(travel_records)").fetchall()]
+    migrations = {
+        "children_0_6": "ALTER TABLE travel_records ADD COLUMN children_0_6 INTEGER NOT NULL DEFAULT 0",
+        "children_7_13": "ALTER TABLE travel_records ADD COLUMN children_7_13 INTEGER NOT NULL DEFAULT 0",
+        "children_14_18": "ALTER TABLE travel_records ADD COLUMN children_14_18 INTEGER NOT NULL DEFAULT 0",
+    }
+    for column, statement in migrations.items():
+        if column not in columns:
+            cur.execute(statement)
+
+    columns = [row[1] for row in cur.execute("PRAGMA table_info(travel_records)").fetchall()]
+    if "child_age_groups" in columns:
+        cur.execute("""
+            UPDATE travel_records
+            SET children_0_6 = 0,
+                children_7_13 = 0,
+                children_14_18 = 0
+            WHERE child_age_groups <> ''
+              AND children_0_6 = 0
+              AND children_7_13 = 0
+              AND children_14_18 = 0
+        """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS travel_config (
@@ -458,6 +484,7 @@ def edit_my_record_dialog(user_name):
         return
 
     row = current.iloc[0]
+
     adults = st.number_input(
         "👨 大人",
         min_value=0,
@@ -466,14 +493,40 @@ def edit_my_record_dialog(user_name):
         format="%d",
         key="my_edit_adults"
     )
-    children = st.number_input(
-        "🧒 小孩",
-        min_value=0,
-        step=1,
-        value=int(row["children"]),
-        format="%d",
-        key="my_edit_children"
-    )
+
+    st.markdown("### 🧒 小孩")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        age_0_6 = st.number_input(
+            "0-6歲",
+            min_value=0,
+            step=1,
+            value=int(row.get("children_0_6", 0)),
+            format="%d",
+            key="my_edit_0_6"
+        )
+    with c2:
+        age_7_13 = st.number_input(
+            "7-13歲",
+            min_value=0,
+            step=1,
+            value=int(row.get("children_7_13", 0)),
+            format="%d",
+            key="my_edit_7_13"
+        )
+    with c3:
+        age_14_18 = st.number_input(
+            "14-18歲",
+            min_value=0,
+            step=1,
+            value=int(row.get("children_14_18", 0)),
+            format="%d",
+            key="my_edit_14_18"
+        )
+
+    children = int(age_0_6) + int(age_7_13) + int(age_14_18)
+    st.caption(f"🧒 小孩合計：{children} 人")
+
     note = st.text_area(
         "📝 備註",
         value=str(row["note"] or ""),
@@ -481,7 +534,7 @@ def edit_my_record_dialog(user_name):
         key="my_edit_note"
     )
 
-    total = int(adults) + int(children)
+    total = int(adults) + children
     st.caption(f"👥 總人數：{total} 人")
 
     if st.button("💾 儲存我的修改", type="primary", use_container_width=True):
@@ -491,11 +544,15 @@ def edit_my_record_dialog(user_name):
 
         affected = execute_db(
             """UPDATE travel_records
-               SET adults=?, children=?, note=?, record_time=?
+               SET adults=?, children=?, children_0_6=?, children_7_13=?,
+                   children_14_18=?, note=?, record_time=?
                WHERE name=?""",
             (
                 int(adults),
-                int(children),
+                children,
+                int(age_0_6),
+                int(age_7_13),
+                int(age_14_18),
                 note.strip(),
                 datetime.now().strftime("%Y-%m-%d %H:%M"),
                 user_name
@@ -504,6 +561,7 @@ def edit_my_record_dialog(user_name):
         if affected == 1:
             st.toast(f"✅ 已更新：{user_name}")
             st.rerun()
+
 
 @st.dialog("✏️ 編輯旅遊資料")
 def edit_record_dialog(record_id):
@@ -521,31 +579,80 @@ def edit_record_dialog(record_id):
 
     row = current.iloc[0]
     name = str(row["name"])
-    adults = int(row["adults"])
-    children = int(row["children"])
-    note = str(row["note"] or "")
 
-    new_adults = st.number_input("👨 大人", min_value=0, step=1, value=adults, format="%d")
-    new_children = st.number_input("🧒 小孩", min_value=0, step=1, value=children, format="%d")
-    new_note = st.text_area("📝 備註", value=note, height=100)
+    adults = st.number_input(
+        "👨 大人",
+        min_value=0,
+        step=1,
+        value=int(row["adults"]),
+        format="%d",
+        key=f"admin_edit_adults_{record_id}"
+    )
+
+    st.markdown("### 🧒 小孩")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        age_0_6 = st.number_input(
+            "0-6歲",
+            min_value=0,
+            step=1,
+            value=int(row.get("children_0_6", 0)),
+            format="%d",
+            key=f"admin_edit_0_6_{record_id}"
+        )
+    with c2:
+        age_7_13 = st.number_input(
+            "7-13歲",
+            min_value=0,
+            step=1,
+            value=int(row.get("children_7_13", 0)),
+            format="%d",
+            key=f"admin_edit_7_13_{record_id}"
+        )
+    with c3:
+        age_14_18 = st.number_input(
+            "14-18歲",
+            min_value=0,
+            step=1,
+            value=int(row.get("children_14_18", 0)),
+            format="%d",
+            key=f"admin_edit_14_18_{record_id}"
+        )
+
+    children = int(age_0_6) + int(age_7_13) + int(age_14_18)
+    st.caption(f"🧒 小孩合計：{children} 人")
+
+    note = st.text_area(
+        "📝 備註",
+        value=str(row["note"] or ""),
+        height=100,
+        key=f"admin_edit_note_{record_id}"
+    )
+
+    total = int(adults) + children
+    st.caption(f"👥 總人數：{total} 人")
 
     if st.button("💾 儲存修改", type="primary", use_container_width=True):
-        if int(new_adults) + int(new_children) <= 0:
+        if total <= 0:
             st.error("請至少填寫 1 位大人或小孩。")
         else:
             execute_db(
                 """UPDATE travel_records
-                   SET adults=?, children=?, note=?, record_time=?
+                   SET adults=?, children=?, children_0_6=?, children_7_13=?,
+                       children_14_18=?, note=?, record_time=?
                    WHERE id=?""",
                 (
-                    int(new_adults),
-                    int(new_children),
-                    new_note.strip(),
+                    int(adults),
+                    children,
+                    int(age_0_6),
+                    int(age_7_13),
+                    int(age_14_18),
+                    note.strip(),
                     datetime.now().strftime("%Y-%m-%d %H:%M"),
                     record_id
                 )
             )
-            st.toast("✅ 旅遊資料已更新！")
+            st.toast(f"✅ 已更新：{name}")
             st.rerun()
 
 
@@ -645,13 +752,29 @@ def render_stats():
         return
 
     adults = int(df["adults"].sum())
-    children = int(df["children"].sum())
+    age_0_6_total = int(df["children_0_6"].sum())
+    age_7_13_total = int(df["children_7_13"].sum())
+    age_14_18_total = int(df["children_14_18"].sum())
+    children = age_0_6_total + age_7_13_total + age_14_18_total
     total = adults + children
 
     c1, c2, c3 = st.columns(3)
     c1.markdown(f'<div class="section-header header-adult"><div>👨 大人</div><div>{adults} 人</div></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="section-header header-child"><div>🧒 小孩</div><div>{children} 人</div></div>', unsafe_allow_html=True)
     c3.markdown(f'<div class="section-header header-total"><div>👥 總人數</div><div>{total} 人</div></div>', unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="section-header header-people">'
+        '<div>🧒 小孩年齡統計</div>'
+        f'<div>小孩合計 {children} 人</div></div>',
+        unsafe_allow_html=True
+    )
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("0-6歲", age_0_6_total)
+    a2.metric("7-13歲", age_7_13_total)
+    a3.metric("14-18歲", age_14_18_total)
+    a4.metric("小孩合計", children)
 
     st.markdown(
         f'<div class="section-header header-people"><div>📋 旅遊人數明細</div><div>{total} 人</div></div>',
@@ -665,6 +788,9 @@ def render_stats():
         child = int(row["children"])
         person_total = adult + child
         note = html.escape(str(row["note"] or "").strip())
+        person_0_6 = int(row.get("children_0_6", 0))
+        person_7_13 = int(row.get("children_7_13", 0))
+        person_14_18 = int(row.get("children_14_18", 0))
 
         parts = []
         if adult:
@@ -679,13 +805,21 @@ def render_stats():
             c_edit = c_delete = None
 
         with c_info:
+            age_parts = []
+            if person_0_6:
+                age_parts.append(f"0-6歲 × {person_0_6}")
+            if person_7_13:
+                age_parts.append(f"7-13歲 × {person_7_13}")
+            if person_14_18:
+                age_parts.append(f"14-18歲 × {person_14_18}")
+            age_html = f'<div class="custom-text">🧒 {"　".join(age_parts)}</div>' if age_parts else ""
             note_html = f'<div class="custom-text">📝 {note}</div>' if note else ""
             st.markdown(
                 f'<div class="list-row"><div class="list-col-left">'
                 f'<div class="list-title-group">'
                 f'<span class="list-name">👤 {name}</span>'
                 f'<span class="list-qty">{"　".join(parts)}</span>'
-                f'</div>{note_html}</div></div>',
+                f'</div>{age_html}{note_html}</div></div>',
                 unsafe_allow_html=True
             )
 
@@ -711,7 +845,7 @@ def render_stats():
         st.markdown("<hr class='person-divider'>", unsafe_allow_html=True)
 
 
-st.title("🚌 旅遊哦各位～ v1.0")
+st.title("🚌 旅遊哦各位～ v1.0.4")
 
 tab1, tab2 = st.tabs(["📝 填寫人數", "📊 旅遊統計"])
 
@@ -756,11 +890,15 @@ with tab1:
             if has_existing:
                 row = existing.iloc[0]
                 current_adults = int(row["adults"])
-                current_children = int(row["children"])
+                current_0_6 = int(row.get("children_0_6", 0))
+                current_7_13 = int(row.get("children_7_13", 0))
+                current_14_18 = int(row.get("children_14_18", 0))
                 current_note = str(row["note"] or "")
             else:
                 current_adults = 1
-                current_children = 0
+                current_0_6 = 0
+                current_7_13 = 0
+                current_14_18 = 0
                 current_note = ""
 
             location = get_location()
@@ -783,7 +921,40 @@ with tab1:
                     value=current_children, format="%d", key="input_children"
                 )
 
-            total = int(adults) + int(children)
+            st.markdown("### 🧒 小孩")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                age_0_6 = st.number_input(
+                    "0-6歲",
+                    min_value=0,
+                    step=1,
+                    value=current_0_6,
+                    format="%d",
+                    key="input_child_0_6"
+                )
+            with c2:
+                age_7_13 = st.number_input(
+                    "7-13歲",
+                    min_value=0,
+                    step=1,
+                    value=current_7_13,
+                    format="%d",
+                    key="input_child_7_13"
+                )
+            with c3:
+                age_14_18 = st.number_input(
+                    "14-18歲",
+                    min_value=0,
+                    step=1,
+                    value=current_14_18,
+                    format="%d",
+                    key="input_child_14_18"
+                )
+
+            children = int(age_0_6) + int(age_7_13) + int(age_14_18)
+            st.caption(f"🧒 小孩合計：{children} 人")
+
+            total = int(adults) + children
             st.markdown(
                 f'<div style="text-align:center;padding:8px 0 14px;">'
                 f'<span class="small-label">本次填寫</span><br>'
@@ -809,7 +980,8 @@ with tab1:
                            SET adults=?, children=?, note=?, record_time=?
                            WHERE name=?""",
                         (
-                            int(adults), int(children), note.strip(),
+                            int(adults), children, int(age_0_6), int(age_7_13),
+                            int(age_14_18), note.strip(),
                             datetime.now().strftime("%Y-%m-%d %H:%M"),
                             user_name
                         )
@@ -819,10 +991,12 @@ with tab1:
                 else:
                     execute_db(
                         """INSERT INTO travel_records
-                           (name, adults, children, note, record_time)
-                           VALUES (?, ?, ?, ?, ?)""",
+                           (name, adults, children, children_0_6, children_7_13,
+                            children_14_18, note, record_time)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            user_name, int(adults), int(children), note.strip(),
+                            user_name, int(adults), children, int(age_0_6),
+                            int(age_7_13), int(age_14_18), note.strip(),
                             datetime.now().strftime("%Y-%m-%d %H:%M")
                         )
                     )
