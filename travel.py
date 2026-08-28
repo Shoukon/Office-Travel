@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.8"
+VERSION = "v1.0.8.1"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -271,7 +271,9 @@ def encrypt_github_backup(data):
     key = get_github_encryption_key()
     if not key:
         raise ValueError("尚未設定 GitHub encryption_key。")
-    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload = dict(data)
+    payload["backup_format"] = "office-travel-encrypted-v1"
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return Fernet(key).encrypt(raw).decode("ascii")
 
 
@@ -281,9 +283,15 @@ def decrypt_github_backup(encrypted_text):
         raise ValueError("尚未設定 GitHub encryption_key。")
     try:
         raw = Fernet(key).decrypt(encrypted_text.encode("ascii"))
-    except InvalidToken:
-        raise ValueError("GitHub 備份無法解密：加密金鑰不正確或備份內容已損壞。")
-    return json.loads(raw.decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"))
+    except (InvalidToken, ValueError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValueError(
+            "GitHub 備份無法解密：加密金鑰不正確，或 GitHub 上仍是舊版明文備份。"
+        ) from e
+
+    if data.get("backup_format") != "office-travel-encrypted-v1":
+        raise ValueError("GitHub 備份格式不是目前的加密版本。")
+    return data
 
 
 def github_get_backup():
@@ -295,8 +303,24 @@ def github_get_backup():
     try:
         result = github_request("GET", url, token)
         encoded = result.get("content", "").replace("\n", "")
-        encrypted_text = base64.b64decode(encoded).decode("ascii")
-        return decrypt_github_backup(encrypted_text), result.get("sha")
+        raw_text = base64.b64decode(encoded).decode("utf-8")
+
+        # Migration path: the first v1.0.8 test created a plaintext JSON backup.
+        # Do not try to import it as an encrypted backup. Return no backup data
+        # but keep its SHA so the next sync can safely replace it in-place.
+        try:
+            data = decrypt_github_backup(raw_text)
+            return data, result.get("sha")
+        except ValueError:
+            try:
+                legacy = json.loads(raw_text)
+                if isinstance(legacy, dict) and legacy.get("format") == "office-travel-backup":
+                    return None, result.get("sha")
+            except Exception:
+                pass
+            raise ValueError(
+                "GitHub 備份無法解密：加密金鑰不正確，或備份內容已損壞。"
+            )
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None, None
