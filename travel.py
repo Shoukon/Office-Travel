@@ -1598,7 +1598,7 @@ with tab1:
                 choose_user()
 
         if st.session_state.user_name not in member_names:
-            st.info("👆 請先選擇姓名，再填寫同行人數。")
+            st.info("👆 請先選擇姓名，再填寫同行人數")
         else:
             user_name = st.session_state.user_name
             existing = get_db(
