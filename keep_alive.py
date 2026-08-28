@@ -13,7 +13,7 @@ def wake_up():
     driver = webdriver.Chrome(options=chrome_options)
     
     # 【重要】請將下方網址替換成你的 Streamlit App 實際網址
-    app_url = "https://orderpy-3huwovakwtk5iepop2kuxv.streamlit.app"
+    app_url = "https://office-travel-gbilfvtnk6wkuybcvec983.streamlit.app/"
     
     try:
         print(f"開始造訪：{app_url}")
