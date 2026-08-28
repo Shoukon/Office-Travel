@@ -909,17 +909,15 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-            c1, c2 = st.columns(2)
-            with c1:
-                adults = st.number_input(
-                    "👨 大人", min_value=0, step=1,
-                    value=current_adults, format="%d", key="input_adults"
-                )
-            with c2:
-                children = st.number_input(
-                    "🧒 小孩", min_value=0, step=1,
-                    value=current_children, format="%d", key="input_children"
-                )
+            st.markdown("### 👨 大人")
+            adults = st.number_input(
+                "大人",
+                min_value=0,
+                step=1,
+                value=current_adults,
+                format="%d",
+                key="input_adults"
+            )
 
             st.markdown("### 🧒 小孩")
             c1, c2, c3 = st.columns(3)
