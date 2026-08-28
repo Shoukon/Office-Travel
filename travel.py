@@ -8,7 +8,7 @@ from datetime import datetime
 DB_FILE = "travel.db"
 
 st.set_page_config(
-    page_title="旅遊哦各位～ v1.0.3.1",
+    page_title="旅遊哦各位～ v1.0.3.2",
     page_icon="🚌",
     layout="wide"
 )
@@ -446,6 +446,65 @@ def manage_members_dialog():
                 st.rerun()
 
 
+
+@st.dialog("✏️ 修改我的旅遊資料")
+def edit_my_record_dialog(user_name):
+    current = get_db(
+        "SELECT * FROM travel_records WHERE name=? LIMIT 1",
+        (user_name,)
+    )
+    if current.empty:
+        st.info("目前沒有可修改的旅遊資料。")
+        return
+
+    row = current.iloc[0]
+    adults = st.number_input(
+        "👨 大人",
+        min_value=0,
+        step=1,
+        value=int(row["adults"]),
+        format="%d",
+        key="my_edit_adults"
+    )
+    children = st.number_input(
+        "🧒 小孩",
+        min_value=0,
+        step=1,
+        value=int(row["children"]),
+        format="%d",
+        key="my_edit_children"
+    )
+    note = st.text_area(
+        "📝 備註",
+        value=str(row["note"] or ""),
+        height=110,
+        key="my_edit_note"
+    )
+
+    total = int(adults) + int(children)
+    st.caption(f"👥 總人數：{total} 人")
+
+    if st.button("💾 儲存我的修改", type="primary", use_container_width=True):
+        if total <= 0:
+            st.error("請至少填寫 1 位大人或小孩。")
+            return
+
+        affected = execute_db(
+            """UPDATE travel_records
+               SET adults=?, children=?, note=?, record_time=?
+               WHERE name=?""",
+            (
+                int(adults),
+                int(children),
+                note.strip(),
+                datetime.now().strftime("%Y-%m-%d %H:%M"),
+                user_name
+            )
+        )
+        if affected == 1:
+            st.toast(f"✅ 已更新：{user_name}")
+            st.rerun()
+
 @st.dialog("✏️ 編輯旅遊資料")
 def edit_record_dialog(record_id):
     if not st.session_state.admin_logged_in:
@@ -782,6 +841,24 @@ with tab1:
                     f'<div>共 {my_total} 人</div></div>',
                     unsafe_allow_html=True
                 )
+
+                summary = []
+                if int(row["adults"]):
+                    summary.append(f"👨 大人 × {int(row['adults'])}")
+                if int(row["children"]):
+                    summary.append(f"🧒 小孩 × {int(row['children'])}")
+                st.markdown("　".join(summary))
+
+                if str(row["note"] or "").strip():
+                    st.caption(f"📝 {html.escape(str(row['note']))}")
+
+                if st.button(
+                    "✏️ 修改我的資料",
+                    type="secondary",
+                    use_container_width=True,
+                    key="edit_my_record"
+                ):
+                    edit_my_record_dialog(user_name)
 
 with tab2:
     render_stats()
