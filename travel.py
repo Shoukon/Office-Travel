@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.0.0"
+VERSION = "v1.1.1"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -1623,7 +1623,7 @@ with tab1:
             if st.button("＋ 填寫我的旅遊資料", type="primary", use_container_width=True):
                 if has_existing:
                     st.info("ℹ️ 你已經填寫過旅遊資料，請使用下方「✏️ 修改我的資料」。")
-                elif total <= 0:
+                elif total <= 0 and participation == "參加":
                     st.error("請至少填寫 1 位大人或小孩。")
                 else:
                     execute_db(
@@ -1632,8 +1632,13 @@ with tab1:
                             children_14_18, note, record_time, participation_status)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            user_name, int(adults), children, int(age_0_6),
-                            int(age_7_13), int(age_14_18), note.strip(),
+                            user_name,
+                            0 if participation == "不參加" else int(adults),
+                            0 if participation == "不參加" else children,
+                            0 if participation == "不參加" else int(age_0_6),
+                            0 if participation == "不參加" else int(age_7_13),
+                            0 if participation == "不參加" else int(age_14_18),
+                            note.strip(),
                             taiwan_now().strftime("%Y-%m-%d %H:%M"),
                             "participating" if participation == "參加" else "not_participating"
                         )
