@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.0.9"
+VERSION = "v1.0.9.1"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -897,7 +897,8 @@ def edit_my_record_dialog(user_name):
         step=1,
         value=int(row["adults"]),
         format="%d",
-        key="my_edit_adults"
+        key="my_edit_adults",
+        disabled=(participation == "不參加")
     )
 
     st.markdown("### 🧒 小孩")
@@ -909,7 +910,8 @@ def edit_my_record_dialog(user_name):
             step=1,
             value=int(row.get("children_0_6", 0)),
             format="%d",
-            key="my_edit_0_6"
+            key="my_edit_0_6",
+            disabled=(participation == "不參加")
         )
     with c2:
         age_7_13 = st.number_input(
@@ -918,7 +920,8 @@ def edit_my_record_dialog(user_name):
             step=1,
             value=int(row.get("children_7_13", 0)),
             format="%d",
-            key="my_edit_7_13"
+            key="my_edit_7_13",
+            disabled=(participation == "不參加")
         )
     with c3:
         age_14_18 = st.number_input(
@@ -927,7 +930,8 @@ def edit_my_record_dialog(user_name):
             step=1,
             value=int(row.get("children_14_18", 0)),
             format="%d",
-            key="my_edit_14_18"
+            key="my_edit_14_18",
+            disabled=(participation == "不參加")
         )
 
     if participation == "不參加":
@@ -1008,7 +1012,8 @@ def edit_record_dialog(record_id):
         step=1,
         value=int(row["adults"]),
         format="%d",
-        key=f"admin_edit_adults_{record_id}"
+        key=f"admin_edit_adults_{record_id}",
+        disabled=(participation == "不參加")
     )
 
     st.markdown("### 🧒 小孩")
@@ -1020,7 +1025,8 @@ def edit_record_dialog(record_id):
             step=1,
             value=int(row.get("children_0_6", 0)),
             format="%d",
-            key=f"admin_edit_0_6_{record_id}"
+            key=f"admin_edit_0_6_{record_id}",
+            disabled=(participation == "不參加")
         )
     with c2:
         age_7_13 = st.number_input(
@@ -1029,7 +1035,8 @@ def edit_record_dialog(record_id):
             step=1,
             value=int(row.get("children_7_13", 0)),
             format="%d",
-            key=f"admin_edit_7_13_{record_id}"
+            key=f"admin_edit_7_13_{record_id}",
+            disabled=(participation == "不參加")
         )
     with c3:
         age_14_18 = st.number_input(
@@ -1038,7 +1045,8 @@ def edit_record_dialog(record_id):
             step=1,
             value=int(row.get("children_14_18", 0)),
             format="%d",
-            key=f"admin_edit_14_18_{record_id}"
+            key=f"admin_edit_14_18_{record_id}",
+            disabled=(participation == "不參加")
         )
 
     if participation == "不參加":
@@ -1453,7 +1461,8 @@ with tab1:
                 step=1,
                 value=current_adults,
                 format="%d",
-                key="input_adults"
+                key="input_adults",
+                disabled=(participation == "不參加")
             )
 
             st.markdown("### 🧒 小孩")
@@ -1465,7 +1474,8 @@ with tab1:
                     step=1,
                     value=current_0_6,
                     format="%d",
-                    key="input_child_0_6"
+                    key="input_child_0_6",
+                    disabled=(participation == "不參加")
                 )
             with c2:
                 age_7_13 = st.number_input(
@@ -1474,7 +1484,8 @@ with tab1:
                     step=1,
                     value=current_7_13,
                     format="%d",
-                    key="input_child_7_13"
+                    key="input_child_7_13",
+                    disabled=(participation == "不參加")
                 )
             with c3:
                 age_14_18 = st.number_input(
@@ -1483,7 +1494,8 @@ with tab1:
                     step=1,
                     value=current_14_18,
                     format="%d",
-                    key="input_child_14_18"
+                    key="input_child_14_18",
+                    disabled=(participation == "不參加")
                 )
 
             if participation == "不參加":
