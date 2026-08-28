@@ -14,7 +14,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 DB_FILE = "travel.db"
-VERSION = "v1.1.4"
+VERSION = "v1.1.5"
 GITHUB_SYNC_SUPPRESSED = False
 
 
@@ -410,10 +410,34 @@ def set_github_sync_success_status():
     )
     st.session_state["github_sync_result"] = (
         "success",
-        f"🟢 **最後一次同步成功**\\n\\n"
-        f"同步時間：{sync_time}（台灣時間）  \\n"
+        f"🟢 **最後一次同步成功**\n\n"
+        f"同步時間：{sync_time}（台灣時間）  \n"
         f"名單：{member_count} 人｜旅遊資料：{record_count} 筆"
     )
+
+
+def restore_github_sync_status():
+    """Load the latest GitHub backup timestamp into the admin status panel."""
+    if not github_is_configured():
+        return False
+    try:
+        backup, _ = github_get_backup()
+        if not backup:
+            return False
+        exported_at = str(backup.get("exported_at", "")).strip()
+        if not exported_at:
+            return False
+        member_count = len(backup.get("members", []))
+        record_count = len(backup.get("records", []))
+        st.session_state["github_sync_result"] = (
+            "success",
+            f"🟢 **最後一次同步成功**\n\n"
+            f"同步時間：{exported_at}（台灣時間）  \n"
+            f"名單：{member_count} 人｜旅遊資料：{record_count} 筆"
+        )
+        return True
+    except Exception:
+        return False
 
 
 def sync_github_backup(show_error=False):
@@ -1360,6 +1384,7 @@ with st.sidebar:
                 st.error("⚠️ 尚未設定 [admin] password。")
             elif admin_input == get_admin_password():
                 st.session_state.admin_logged_in = True
+                restore_github_sync_status()
                 st.toast("✅ 管理員登入成功！")
                 st.rerun()
             else:
