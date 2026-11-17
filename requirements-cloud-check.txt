@@ -1,0 +1,3 @@
+# CI compatibility target observed in the Streamlit Cloud log on 2026-11-17.
+# Test-only: the tests never start Streamlit, so only pandas matters here.
+pandas==3.1.1

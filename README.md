@@ -11,8 +11,9 @@
 | `travel_data.json` | 加密備份（由 app 自動寫入，請勿手動修改） |
 | `keep_alive.py` | 由 GitHub Actions 定期造訪 app，必要時點擊喚醒按鈕 |
 | `tests/` | 自動測試（備份安全、統計、管理員登入） |
-| `requirements.txt` | app 需要的套件 |
+| `requirements.txt` | app 需要的套件（已鎖定為 Streamlit Cloud 實際使用的版本） |
 | `requirements-test.txt` | 只給測試用的套件 |
+| `requirements-cloud-check.txt` | CI 用來模擬雲端版本的測試環境 |
 
 ## Secrets 設定（Streamlit Cloud → Settings → Secrets）
 
@@ -44,9 +45,11 @@ Streamlit Cloud 的本機磁碟在重開機或重新部署後會清空，所以�
 
 管理員頁面可以看到最後一次同步時間與筆數。
 
-## 管理員登入
+## 管理員
 
-連續輸入錯誤 5 次會鎖定 60 秒。
+畫面沒有側邊欄。主頁面有三個分頁：「填寫人數」、「旅遊統計」、「管理員」。
+所有會動到資料的功能（旅遊地點、名單、匯出匯入、GitHub 同步、清空資料、編輯／刪除填寫紀錄）
+都要先在「管理員」分頁登入。連續輸入錯誤 5 次會鎖定 60 秒。
 
 ## 本機測試
 
@@ -59,5 +62,5 @@ python -m pytest tests -q
 
 ## keep_alive
 
-預設網址寫在 `keep_alive.py`。若 app 網址改變，可在 GitHub → Settings → Secrets and variables →
+網址設定在 `keep_alive.py`。若 app 網址改變，可在 GitHub → Settings → Secrets and variables →
 Actions → Variables 新增 `APP_URL`，不必改程式。腳本在 app 沒有載入時會讓 Actions 顯示失敗。
