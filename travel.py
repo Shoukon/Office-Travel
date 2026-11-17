@@ -377,7 +377,12 @@ def github_put_backup(data):
     if not (token and owner and repo):
         return False, "尚未設定 GitHub Secrets。"
 
-    _, sha = github_get_backup()
+    remote, sha = github_get_backup()
+    # 安全閥：本機完全沒有名單與旅遊資料，但 GitHub 上的備份有資料時，
+    # 一律拒絕上傳，避免重啟後的空資料庫覆蓋掉好的備份。
+    if (remote and (remote.get("members") or remote.get("records"))
+            and not data.get("members") and not data.get("records")):
+        return False, "本機資料是空的，但 GitHub 備份有資料；為避免覆蓋備份，已拒絕上傳。"
     encrypted_text = encrypt_github_backup(data)
     payload = {
         "message": f"Update encrypted travel data {taiwan_now().strftime('%Y-%m-%d %H:%M:%S')}",
@@ -453,6 +458,57 @@ def sync_github_backup(show_error=False):
         if show_error:
             st.error(f"⚠️ GitHub 備份同步失敗：{e}")
         return False
+
+
+SYNC_FAILED_NOTE = "（⚠️ 已儲存在系統，但 GitHub 備份未成功，請管理員按「立即同步」）"
+
+
+def sync_after_write():
+    """使用者寫入後備份到 GitHub；回傳是否確認成功，不丟出例外。"""
+    ok = sync_github_backup(show_error=False)
+    if ok:
+        set_github_sync_success_status()
+    return ok
+
+
+def get_restore_pending():
+    df = get_db("SELECT config_value FROM travel_config WHERE config_key='restore_pending'")
+    return (not df.empty) and str(df.iloc[0]["config_value"]).strip() == "1"
+
+
+def set_restore_pending(flag):
+    execute_db(
+        "INSERT INTO travel_config (config_key, config_value) VALUES ('restore_pending', ?) "
+        "ON CONFLICT(config_key) DO UPDATE SET config_value=excluded.config_value",
+        ("1" if flag else "0",),
+    )
+
+
+def run_startup_restore(is_new_db):
+    """啟動時還原 GitHub 備份。
+
+    回傳：'local_only'（未設定 GitHub）、'ready'（可正常使用）、
+    'restored'（已從備份還原）、'missing'（確認 GitHub 沒有備份，可建立新資料）、
+    'failed'（備份存在但讀取／還原失敗，必須停止，不能用空資料覆蓋備份）。
+    「待還原」標記存在資料庫內，因此頁面重新整理後仍會繼續阻擋，直到還原成功。
+    """
+    if not github_is_configured():
+        return "local_only"
+    if is_new_db:
+        set_restore_pending(True)
+    if not get_restore_pending():
+        return "ready"
+    try:
+        backup, _ = github_get_backup()
+        if backup is None:
+            set_restore_pending(False)
+            return "missing"
+        import_travel_data(backup)
+        set_restore_pending(False)
+        return "restored"
+    except Exception as e:
+        st.session_state["restore_error"] = str(e)
+        return "failed"
 
 
 def restore_from_github_if_new_db(is_new_db):
@@ -718,10 +774,19 @@ def seed_members_from_secrets_once():
 
 
 is_new_db = init_db()
-restored_from_github = restore_from_github_if_new_db(is_new_db)
-if not restored_from_github:
+restore_state = run_startup_restore(is_new_db)
+if restore_state == "failed":
+    st.error(
+        "⚠️ 無法從 GitHub 還原既有資料，為避免用空資料覆蓋備份，已暫停使用。\n\n"
+        f"原因：{st.session_state.get('restore_error', '未知錯誤')}"
+    )
+    st.caption("你的資料仍安全保存在 GitHub。請稍後按下方按鈕重試；若持續失敗請通知管理員檢查 Secrets 與網路。")
+    if st.button("🔄 重試還原", key="retry_restore", type="primary"):
+        st.rerun()
+    st.stop()
+if restore_state != "restored":
     seed_members_from_secrets_once()
-    if is_new_db and github_is_configured():
+    if restore_state == "missing":
         sync_github_backup(show_error=False)
 
 if "user_name" not in st.session_state:
@@ -1054,9 +1119,8 @@ def edit_my_record_dialog(user_name):
             )
         )
         if affected == 1:
-            if sync_github_backup(show_error=False):
-                set_github_sync_success_status()
-            st.toast(f"✅ 已更新：{user_name}")
+            synced = sync_after_write()
+            st.toast(f"✅ 已更新：{user_name}" + ("" if synced else SYNC_FAILED_NOTE))
             st.rerun()
 
 
@@ -1402,6 +1466,38 @@ with st.sidebar:
                 st.error("❌ 管理員密碼錯誤。")
 
 
+def compute_travel_totals(df):
+    """統計數字的唯一計算來源（render_stats 與測試共用）。
+
+    - 「不參加」的資料一律不計入大人／小孩人數。
+    - 小孩人數以三個年齡層加總為準；若某筆資料的「小孩」欄位與年齡層加總不一致，
+      列入 mismatched，讓畫面提醒管理員，而不是默默選一邊。
+    """
+    result = {"adults": 0, "age_0_6": 0, "age_7_13": 0, "age_14_18": 0,
+              "children": 0, "total": 0, "participating": 0,
+              "not_participating": 0, "mismatched": []}
+    if df is None or df.empty:
+        return result
+    if "participation_status" in df.columns:
+        status = df["participation_status"].fillna("participating")
+    else:
+        status = pd.Series("participating", index=df.index)
+    joined = df[status != "not_participating"]
+    result["not_participating"] = int((status == "not_participating").sum())
+    result["participating"] = int(len(joined))
+    result["adults"] = int(joined["adults"].sum())
+    result["age_0_6"] = int(joined["children_0_6"].sum())
+    result["age_7_13"] = int(joined["children_7_13"].sum())
+    result["age_14_18"] = int(joined["children_14_18"].sum())
+    result["children"] = result["age_0_6"] + result["age_7_13"] + result["age_14_18"]
+    result["total"] = result["adults"] + result["children"]
+    for _, row in joined.iterrows():
+        ages = int(row["children_0_6"]) + int(row["children_7_13"]) + int(row["children_14_18"])
+        if int(row["children"]) != ages:
+            result["mismatched"].append(str(row["name"]))
+    return result
+
+
 @st.fragment(run_every="10s")
 def render_stats():
     c1, c2 = st.columns([8, 1])
@@ -1422,15 +1518,19 @@ def render_stats():
         st.info("🚌 目前尚無旅遊人數資料，等待大家填寫……")
         return
 
-    adults = int(df["adults"].sum())
-    age_0_6_total = int(df["children_0_6"].sum())
-    age_7_13_total = int(df["children_7_13"].sum())
-    age_14_18_total = int(df["children_14_18"].sum())
-    children = age_0_6_total + age_7_13_total + age_14_18_total
-    total = adults + children
-    not_participating = int(
-        (df.get("participation_status", "participating") == "not_participating").sum()
-    )
+    totals = compute_travel_totals(df)
+    adults = totals["adults"]
+    age_0_6_total = totals["age_0_6"]
+    age_7_13_total = totals["age_7_13"]
+    age_14_18_total = totals["age_14_18"]
+    children = totals["children"]
+    total = totals["total"]
+    not_participating = totals["not_participating"]
+    if totals["mismatched"]:
+        st.warning(
+            "⚠️ 以下人員的小孩人數與年齡層加總不一致，統計以年齡層為準，請管理員確認："
+            + "、".join(html.escape(n) for n in totals["mismatched"])
+        )
 
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(f'<div class="section-header header-adult"><div>👨 大人</div><div>{adults} 人</div></div>', unsafe_allow_html=True)
@@ -1731,7 +1831,8 @@ with tab1:
                             "participating" if participation == "參加" else "not_participating"
                         )
                     )
-                    st.toast(f"✅ 已完成填寫：{user_name}")
+                    synced = sync_after_write()
+                    st.toast(f"✅ 已完成填寫：{user_name}" + ("" if synced else SYNC_FAILED_NOTE))
                     st.rerun()
 
             if has_existing:
