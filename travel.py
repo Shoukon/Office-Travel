@@ -906,8 +906,8 @@ def manage_members_dialog():
                 use_container_width=True
             ):
                 move_member(member_id, -1)
-                if sync_github_backup(show_error=False):
-                    set_github_sync_success_status()
+                if not sync_after_write():
+                    st.toast("⚠️ 已儲存，但 GitHub 備份未成功，請到管理員分頁按「立即同步」。")
                 st.session_state["reopen_manage_members"] = True
                 st.rerun()
 
@@ -920,8 +920,8 @@ def manage_members_dialog():
                 use_container_width=True
             ):
                 move_member(member_id, 1)
-                if sync_github_backup(show_error=False):
-                    set_github_sync_success_status()
+                if not sync_after_write():
+                    st.toast("⚠️ 已儲存，但 GitHub 備份未成功，請到管理員分頁按「立即同步」。")
                 st.session_state["reopen_manage_members"] = True
                 st.rerun()
 
@@ -976,14 +976,15 @@ def manage_members_dialog():
                                 "UPDATE travel_records SET name=? WHERE name=?",
                                 (new_name, old_name)
                             )
-                        if sync_github_backup(show_error=False):
-                            set_github_sync_success_status()
+                        if not sync_after_write():
+                            st.toast("⚠️ 已儲存，但 GitHub 備份未成功，請到管理員分頁按「立即同步」。")
                         st.session_state.pop("editing_member_id", None)
                         st.session_state["reopen_manage_members"] = True
                         st.rerun()
             with c2:
                 if st.button("取消", key=f"member_cancel_{member_id}", use_container_width=True):
                     st.session_state.pop("editing_member_id", None)
+                    st.session_state["reopen_manage_members"] = True
                     st.rerun()
 
         if st.session_state.get("deleting_member_id") == member_id:
@@ -992,9 +993,10 @@ def manage_members_dialog():
             with c1:
                 if st.button("🗑️ 確定移除", key=f"member_confirm_delete_{member_id}", type="primary", use_container_width=True):
                     execute_db("DELETE FROM travel_members WHERE id=?", (member_id,))
-                    if sync_github_backup(show_error=False):
-                        set_github_sync_success_status()
+                    if not sync_after_write():
+                        st.toast("⚠️ 已儲存，但 GitHub 備份未成功，請到管理員分頁按「立即同步」。")
                     st.session_state.pop("deleting_member_id", None)
+                    st.toast(f"🗑️ 已移除：{name}")
                     if st.session_state.user_name == name:
                         st.session_state.user_name = None
                     st.session_state["reopen_manage_members"] = True
@@ -1002,6 +1004,7 @@ def manage_members_dialog():
             with c2:
                 if st.button("取消", key=f"member_cancel_delete_{member_id}", use_container_width=True):
                     st.session_state.pop("deleting_member_id", None)
+                    st.session_state["reopen_manage_members"] = True
                     st.rerun()
 
         st.markdown("<hr class='person-divider'>", unsafe_allow_html=True)
@@ -1033,8 +1036,8 @@ def manage_members_dialog():
                     "INSERT INTO travel_members (name, sort_order) VALUES (?, ?)",
                     (new_member, order)
                 )
-                if sync_github_backup(show_error=False):
-                    set_github_sync_success_status()
+                if not sync_after_write():
+                    st.toast("⚠️ 已儲存，但 GitHub 備份未成功，請到管理員分頁按「立即同步」。")
                 st.toast(f"✅ 已新增：{new_member}")
                 st.session_state["reopen_manage_members"] = True
                 st.rerun()
@@ -1265,10 +1268,60 @@ def edit_record_dialog(record_id):
                     record_id
                 )
             )
-            if sync_github_backup(show_error=False):
-                set_github_sync_success_status()
-            st.toast(f"✅ 已更新：{name}")
+            synced = sync_after_write()
+            st.toast(f"✅ 已更新：{name}" + ("" if synced else SYNC_FAILED_NOTE))
             st.rerun()
+
+
+def admin_flash(kind, text):
+    """管理員操作完成後（會 st.rerun）要留在管理員分頁上的結果訊息。"""
+    st.session_state["admin_flash"] = (kind, text)
+
+
+@st.dialog("🗑️ 清空全部旅遊資料")
+def reset_records_dialog():
+    if not st.session_state.admin_logged_in:
+        st.error("🔒 只有管理員可以使用此功能。")
+        return
+    st.warning("⚠️ 此操作會清除全部旅遊資料，但不會刪除名單與旅遊地點。")
+    st.caption(
+        "清除後會同步更新 GitHub 永久備份，"
+        "之後 Reboot 不會恢復已清除的旅遊資料。"
+    )
+    if st.button("✅ 確定清除並同步 GitHub", key="reset_confirm",
+                 type="primary", use_container_width=True):
+        original_records = get_db("SELECT * FROM travel_records")
+        try:
+            execute_db("DELETE FROM travel_records")
+            if not sync_github_backup(show_error=False):
+                raise RuntimeError("GitHub 備份同步失敗，已取消本次清除。")
+        except Exception as e:
+            execute_db("DELETE FROM travel_records")
+            for _, row in original_records.iterrows():
+                cols = list(original_records.columns)
+                vals = [row[c] for c in cols]
+                placeholders = ",".join(["?"] * len(cols))
+                execute_db(
+                    f"INSERT INTO travel_records ({','.join(cols)}) VALUES ({placeholders})",
+                    tuple(vals)
+                )
+            st.session_state.confirm_reset = False
+            # 失敗時留在視窗內顯示原因，不要關閉視窗讓人以為沒反應。
+            st.error(f"❌ 清除未完成：{e}")
+            return
+        st.session_state.confirm_reset = False
+        sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
+        member_count = int(
+            get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
+        )
+        st.session_state["github_sync_result"] = (
+            "success",
+            f"🟢 **最後一次同步成功**\n\n"
+            f"同步時間：{sync_time}（台灣時間）  \n"
+            f"名單：{member_count} 人｜旅遊資料：0 筆"
+        )
+        admin_flash("success", "🗑️ 旅遊資料已全部清除，GitHub 備份也已更新。")
+        st.rerun()
 
 
 def render_admin_panel():
@@ -1299,6 +1352,10 @@ def render_admin_panel():
         return
 
     st.success("🔓 管理員已登入")
+    _flash = st.session_state.pop("admin_flash", None)
+    if _flash:
+        _kind, _text = _flash
+        (st.success if _kind == "success" else st.warning)(_text)
     if st.button("🔒 管理員登出", use_container_width=True):
         st.session_state.admin_logged_in = False
         st.session_state.confirm_reset = False
@@ -1321,9 +1378,12 @@ def render_admin_panel():
                 st.error("請輸入旅遊地點。")
             else:
                 save_location(location_input)
-                if sync_github_backup(show_error=False):
-                    set_github_sync_success_status()
-                st.toast("✅ 旅遊地點已儲存！")
+                synced = sync_after_write()
+                admin_flash(
+                    "success" if synced else "warning",
+                    f"✅ 旅遊地點已儲存：{location_input.strip()}"
+                    + ("" if synced else SYNC_FAILED_NOTE),
+                )
                 st.rerun()
 
         st.divider()
@@ -1374,7 +1434,7 @@ def render_admin_panel():
                         raise RuntimeError("GitHub 備份同步失敗，匯入已取消。")
 
                     st.session_state.pop("travel_backup_upload", None)
-                    st.toast("✅ 旅遊資料匯入成功！")
+                    admin_flash("success", "✅ 旅遊資料匯入成功，GitHub 備份也已更新。")
                     st.rerun()
                 except Exception as e:
                     if original_data is not None:
@@ -1434,51 +1494,8 @@ def render_admin_panel():
     with tab_danger:
         st.subheader("🗑️ 資料管理")
 
-        with st.popover("🗑️ 清空全部旅遊資料", use_container_width=True):
-            st.warning(
-                "⚠️ 此操作會清除全部旅遊資料，但不會刪除名單與旅遊地點。"
-            )
-            st.caption(
-                "清除後會同步更新 GitHub 永久備份，"
-                "之後 Reboot 不會恢復已清除的旅遊資料。"
-            )
-            if st.button(
-                "✅ 確定清除並同步 GitHub",
-                key="reset_confirm",
-                type="primary",
-                use_container_width=True,
-            ):
-                original_records = get_db("SELECT * FROM travel_records")
-                try:
-                    execute_db("DELETE FROM travel_records")
-                    if not sync_github_backup(show_error=False):
-                        raise RuntimeError("GitHub 備份同步失敗，已取消本次清除。")
-                except Exception as e:
-                    execute_db("DELETE FROM travel_records")
-                    for _, row in original_records.iterrows():
-                        cols = list(original_records.columns)
-                        vals = [row[c] for c in cols]
-                        placeholders = ",".join(["?"] * len(cols))
-                        execute_db(
-                            f"INSERT INTO travel_records ({','.join(cols)}) VALUES ({placeholders})",
-                            tuple(vals)
-                        )
-                    st.session_state.confirm_reset = False
-                    st.error(f"❌ 清除未完成：{e}")
-                else:
-                    st.session_state.confirm_reset = False
-                    sync_time = taiwan_now().strftime("%Y-%m-%d %H:%M:%S")
-                    member_count = int(
-                        get_db("SELECT COUNT(*) AS n FROM travel_members").iloc[0]["n"]
-                    )
-                    st.session_state["github_sync_result"] = (
-                        "success",
-                        f"🟢 **最後一次同步成功**\n\n"
-                        f"同步時間：{sync_time}（台灣時間）  \n"
-                        f"名單：{member_count} 人｜旅遊資料：0 筆"
-                    )
-                    st.toast("🗑️ 旅遊資料已清除，GitHub 備份也已更新。")
-                st.rerun()
+        if st.button("🗑️ 清空全部旅遊資料", key="open_reset_dialog", use_container_width=True):
+            reset_records_dialog()
 
         with st.expander("🗄️ 資料庫資訊"):
             records_count = get_db("SELECT COUNT(*) AS n FROM travel_records")
@@ -1658,9 +1675,8 @@ def render_stats():
                     st.write(f"刪除 **{name}** 的旅遊資料？")
                     if st.button("⭕ 確認刪除", key=f"record_delete_confirm_{record_id}", type="primary", use_container_width=True):
                         execute_db("DELETE FROM travel_records WHERE id=?", (record_id,))
-                        if sync_github_backup(show_error=False):
-                            set_github_sync_success_status()
-                        st.toast(f"🗑️ 已刪除：{name}")
+                        synced = sync_after_write()
+                        st.toast(f"🗑️ 已刪除：{name}" + ("" if synced else SYNC_FAILED_NOTE))
                         st.rerun(scope="fragment")
 
         st.markdown("<hr class='person-divider'>", unsafe_allow_html=True)

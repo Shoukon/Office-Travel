@@ -362,5 +362,72 @@ class AdminPanelTests(unittest.TestCase):
         self.assertIn('initial_sidebar_state="collapsed"', text)
 
 
+class ResetDialogTests(unittest.TestCase):
+    """Clearing all records must be a dialog that closes on success and explains failure."""
+
+    def build(self, sync_ok):
+        st = MagicMock()
+        st.session_state = AttrState(admin_logged_in=True)
+        st.dialog = lambda *a, **k: (lambda f: f)
+        st.button.return_value = True
+        records = pd.DataFrame([{"id": 1, "name": "甲", "adults": 1}, {"id": 2, "name": "乙", "adults": 2}])
+        count = pd.DataFrame([{"n": 37}])
+        queries = []
+        env = load(["admin_flash", "reset_records_dialog"], st=st,
+                   get_db=lambda q, params=(): records if "travel_records" in q else count,
+                   execute_db=lambda q, params=(): queries.append((q, params)),
+                   sync_github_backup=lambda show_error=False: sync_ok,
+                   taiwan_now=lambda: datetime(2026, 1, 1, 12, 0, 0))
+        return st, env, queries
+
+    def test_success_clears_flashes_and_closes_dialog_by_rerun(self):
+        st, env, queries = self.build(True)
+        env["reset_records_dialog"]()
+        st.rerun.assert_called_once()
+        st.error.assert_not_called()
+        self.assertEqual(queries, [("DELETE FROM travel_records", ())])
+        kind, text = st.session_state["admin_flash"]
+        self.assertEqual(kind, "success")
+        self.assertIn("已全部清除", text)
+        self.assertEqual(st.session_state["github_sync_result"][0], "success")
+
+    def test_failed_backup_restores_records_and_stays_open_with_the_reason(self):
+        st, env, queries = self.build(False)
+        env["reset_records_dialog"]()
+        st.rerun.assert_not_called()
+        st.error.assert_called_once()
+        self.assertIn("已取消本次清除", st.error.call_args.args[0])
+        inserts = [q for q in queries if q[0].startswith("INSERT INTO travel_records")]
+        self.assertEqual(len(inserts), 2)
+        self.assertNotIn("admin_flash", st.session_state)
+
+    def test_non_admin_cannot_use_it(self):
+        st, env, queries = self.build(True)
+        st.session_state["admin_logged_in"] = False
+        env["reset_records_dialog"]()
+        self.assertEqual(queries, [])
+        st.error.assert_called_once()
+
+    def test_reset_is_no_longer_a_popover(self):
+        text = SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn('st.popover("🗑️ 清空全部旅遊資料"', text)
+        self.assertIn("reset_records_dialog()", text)
+
+
+class AdminFlashDisplayTests(AdminPanelTests):
+    def test_flash_message_is_shown_once_on_the_admin_tab(self):
+        st, render, _ = self.build(True)
+        st.session_state["admin_flash"] = ("success", "✅ 旅遊地點已儲存：阿里山")
+        render()
+        self.assertIn("✅ 旅遊地點已儲存：阿里山", [c.args[0] for c in st.success.call_args_list])
+        self.assertNotIn("admin_flash", st.session_state)
+
+    def test_warning_flash_uses_warning_style(self):
+        st, render, _ = self.build(True)
+        st.session_state["admin_flash"] = ("warning", "備份未成功")
+        render()
+        st.warning.assert_any_call("備份未成功")
+
+
 if __name__ == "__main__":
     unittest.main()
