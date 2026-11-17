@@ -2,20 +2,19 @@ name: Streamlit Travel Keep Alive
 
 on:
   schedule:
-    # 每 6 小時自動執行一次（UTC 00、06、12、18）
+    # 每 6 小時自動執行一次 (UTC 時間 0, 6, 12, 18 點)
     - cron: '0 */6 * * *'
-  workflow_dispatch:
+  workflow_dispatch: # 允許手動測試觸發
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-24.04
     steps:
       - name: 檢出程式碼
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 設定 Python 環境
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -24,4 +23,6 @@ jobs:
           pip install selenium
 
       - name: 執行喚醒腳本
+        env:
+          APP_URL: ${{ vars.APP_URL }}
         run: python keep_alive.py
