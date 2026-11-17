@@ -1,0 +1,2 @@
+# Test-only dependencies (travel.py itself is never started by the tests).
+pandas>=2.2

@@ -2,6 +2,7 @@ import streamlit as st
 import json
 from cryptography.fernet import Fernet, InvalidToken
 import base64
+import hmac
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -665,6 +666,34 @@ def import_travel_data(data):
         raise
     finally:
         conn.close()
+
+
+ADMIN_MAX_FAILURES = 5
+ADMIN_LOCK_SECONDS = 60
+
+
+@st.cache_resource
+def admin_login_throttle():
+    # 整個伺服器程序共用一份，重新整理頁面不會重置失敗次數。
+    return {"failures": 0, "locked_until": 0.0}
+
+
+def verify_admin_password(candidate, expected, throttle, now):
+    """回傳 (ok, message)。使用固定時間比對；連續錯誤達上限後暫時鎖定。"""
+    if now < throttle["locked_until"]:
+        wait = int(throttle["locked_until"] - now) + 1
+        return False, f"嘗試次數過多，請 {wait} 秒後再試。"
+    ok = bool(candidate) and bool(expected) and hmac.compare_digest(
+        str(candidate).encode("utf-8"), str(expected).encode("utf-8"))
+    if ok:
+        throttle["failures"] = 0
+        return True, ""
+    throttle["failures"] += 1
+    if throttle["failures"] >= ADMIN_MAX_FAILURES:
+        throttle["failures"] = 0
+        throttle["locked_until"] = now + ADMIN_LOCK_SECONDS
+        return False, f"❌ 管理員密碼錯誤次數過多，已鎖定 {ADMIN_LOCK_SECONDS} 秒。"
+    return False, "❌ 管理員密碼錯誤。"
 
 
 def get_admin_password():
@@ -1457,13 +1486,17 @@ with st.sidebar:
                 st.error("⚠️ 請輸入管理員密碼。")
             elif not get_admin_password():
                 st.error("⚠️ 尚未設定 [admin] password。")
-            elif admin_input == get_admin_password():
-                st.session_state.admin_logged_in = True
-                restore_github_sync_status()
-                st.toast("✅ 管理員登入成功！")
-                st.rerun()
             else:
-                st.error("❌ 管理員密碼錯誤。")
+                admin_ok, admin_msg = verify_admin_password(
+                    admin_input, get_admin_password(),
+                    admin_login_throttle(), time.monotonic())
+                if admin_ok:
+                    st.session_state.admin_logged_in = True
+                    restore_github_sync_status()
+                    st.toast("✅ 管理員登入成功！")
+                    st.rerun()
+                else:
+                    st.error(admin_msg)
 
 
 def compute_travel_totals(df):

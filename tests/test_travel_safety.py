@@ -6,6 +6,7 @@ only the named functions are extracted from it (the app itself never runs).
 import ast
 import base64
 import gc
+import hmac
 import json
 import sqlite3
 import tempfile
@@ -21,14 +22,37 @@ import pandas as pd
 SOURCE = Path(__file__).resolve().parent.parent / "travel.py"
 
 
+class TrackedSqlite:
+    """sqlite3 stand-in that remembers every connection so tests can close them.
+
+    travel.py's get_db leaves closing to the garbage collector; on Windows that keeps
+    the .db file locked and the temp folder cannot be deleted.
+    """
+    def __init__(self):
+        self.connections = []
+    def connect(self, *args, **kwargs):
+        conn = sqlite3.connect(*args, **kwargs)
+        self.connections.append(conn)
+        return conn
+    def close_all(self):
+        for conn in self.connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self.connections.clear()
+    def __getattr__(self, name):
+        return getattr(sqlite3, name)
+
+
 def load(names, **env):
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     missing = set(names) - {n.name for n in funcs}
     if missing:
         raise AssertionError(f"missing function(s): {sorted(missing)}")
-    scope = {"sqlite3": sqlite3, "pd": pd, "json": json, "base64": base64,
-             "urllib": urllib, "datetime": datetime, "TAIWAN_TZ": ZoneInfo("Asia/Taipei"), "time": SimpleNamespace(sleep=lambda _: None)}
+    scope = {"sqlite3": env.pop("sqlite_module", sqlite3), "pd": pd, "json": json, "base64": base64,
+             "urllib": urllib, "hmac": hmac, "datetime": datetime, "TAIWAN_TZ": ZoneInfo("Asia/Taipei"), "time": SimpleNamespace(sleep=lambda _: None)}
     scope.update(env)
     exec(compile(ast.Module(body=funcs, type_ignores=[]), str(SOURCE), "exec"), scope)
     return scope
@@ -68,12 +92,15 @@ class StartupRestoreTests(unittest.TestCase):
         # Windows cannot delete a SQLite file while a connection object is still alive
         # (travel.py's get_db leaves closing to the garbage collector), so collect first.
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.addCleanup(self.tmp.cleanup)
+        self.tracked = TrackedSqlite()
+        self.addCleanup(self.tmp.cleanup)   # runs last
         self.addCleanup(gc.collect)
+        self.addCleanup(self.tracked.close_all)  # runs first
         self.remote = FakeRemote()
         self.st = FakeStreamlit()
         self.configured = True
-        self.env = load(self.NAMES, DB_FILE=str(Path(self.tmp.name) / "travel.db"), st=self.st,
+        self.env = load(self.NAMES, sqlite_module=self.tracked,
+                        DB_FILE=str(Path(self.tmp.name) / "travel.db"), st=self.st,
                         github_is_configured=lambda: self.configured,
                         github_get_backup=self.remote.get)
 
@@ -134,7 +161,7 @@ class StartupRestoreTests(unittest.TestCase):
 
     def test_restore_marker_never_leaks_into_exported_backup(self):
         names = self.NAMES + ["export_travel_data", "get_location", "taiwan_now"]
-        env = load(names, DB_FILE=self.env["DB_FILE"], st=self.st,
+        env = load(names, sqlite_module=self.tracked, DB_FILE=self.env["DB_FILE"], st=self.st,
                    github_is_configured=lambda: True, github_get_backup=self.remote.get)
         self.remote.data = backup(["甲"], [])
         env["run_startup_restore"](env["init_db"]())
@@ -246,6 +273,36 @@ class StatisticsTests(unittest.TestCase):
     def test_empty_frame(self):
         t = self.totals(pd.DataFrame())
         self.assertEqual((t["total"], t["participating"], t["not_participating"]), (0, 0, 0))
+
+
+class AdminLoginTests(unittest.TestCase):
+    def setUp(self):
+        env = load(["verify_admin_password"], ADMIN_MAX_FAILURES=5, ADMIN_LOCK_SECONDS=60)
+        self.verify = env["verify_admin_password"]
+        self.throttle = {"failures": 0, "locked_until": 0.0}
+
+    def test_correct_password_logs_in_and_resets_failures(self):
+        self.throttle["failures"] = 3
+        self.assertEqual(self.verify("pw", "pw", self.throttle, 100.0), (True, ""))
+        self.assertEqual(self.throttle["failures"], 0)
+
+    def test_wrong_empty_or_unconfigured_password_is_rejected(self):
+        for candidate, expected in (("bad", "pw"), ("", "pw"), ("pw", ""), ("", "")):
+            ok, _ = self.verify(candidate, expected, self.throttle, 100.0)
+            self.assertFalse(ok, (candidate, expected))
+
+    def test_five_failures_lock_even_the_correct_password_until_expiry(self):
+        for _ in range(5):
+            ok, message = self.verify("bad", "pw", self.throttle, 100.0)
+        self.assertFalse(ok)
+        self.assertIn("鎖定", message)
+        ok, message = self.verify("pw", "pw", self.throttle, 130.0)
+        self.assertFalse(ok)
+        self.assertIn("31 秒", message)  # 160 - 130 = 30s left, rounded up
+        self.assertEqual(self.verify("pw", "pw", self.throttle, 161.0), (True, ""))
+
+    def test_non_ascii_password_works(self):
+        self.assertTrue(self.verify("密碼123", "密碼123", self.throttle, 1.0)[0])
 
 
 if __name__ == "__main__":
