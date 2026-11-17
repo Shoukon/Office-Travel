@@ -25,11 +25,14 @@ if "github_sync_result" not in st.session_state:
 st.set_page_config(
     page_title=f"旅遊哦各位～ {VERSION}",
     page_icon="🚌",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] { display: none !important; }
 html, body, button, input, textarea, select,
 [data-baseweb], [class*="st-"]:not([data-testid="stIconMaterial"]) {
     font-family: "Microsoft JhengHei", "微軟正黑體", "Segoe UI Emoji",
@@ -1268,13 +1271,46 @@ def edit_record_dialog(record_id):
             st.rerun()
 
 
-with st.sidebar:
-    st.header("⚙️ 旅遊管理")
+def render_admin_panel():
+    """管理員分頁：未登入只顯示登入表單；登入後才顯示所有會動到資料的功能。"""
+    if not st.session_state.admin_logged_in:
+        st.info("目前為一般使用者模式")
+        admin_input = st.text_input(
+            "管理員密碼",
+            type="password",
+            placeholder="請輸入管理員密碼"
+        )
+        if st.button("🔓 管理員登入", type="primary", use_container_width=True):
+            if not admin_input:
+                st.error("⚠️ 請輸入管理員密碼。")
+            elif not get_admin_password():
+                st.error("⚠️ 尚未設定 [admin] password。")
+            else:
+                admin_ok, admin_msg = verify_admin_password(
+                    admin_input, get_admin_password(),
+                    admin_login_throttle(), time.monotonic())
+                if admin_ok:
+                    st.session_state.admin_logged_in = True
+                    restore_github_sync_status()
+                    st.toast("✅ 管理員登入成功！")
+                    st.rerun()
+                else:
+                    st.error(admin_msg)
+        return
 
-    st.subheader("📍 旅遊地點")
-    location = get_location()
+    st.success("🔓 管理員已登入")
+    if st.button("🔒 管理員登出", use_container_width=True):
+        st.session_state.admin_logged_in = False
+        st.session_state.confirm_reset = False
+        st.rerun()
 
-    if st.session_state.admin_logged_in:
+    tab_set, tab_backup, tab_sync, tab_danger = st.tabs(
+        ["📍 旅遊設定", "💾 資料備份", "☁️ GitHub 同步", "🗑️ 資料管理"]
+    )
+
+    with tab_set:
+        st.subheader("📍 旅遊地點")
+        location = get_location()
         location_input = st.text_input(
             "旅遊地點名稱",
             value=location,
@@ -1289,26 +1325,15 @@ with st.sidebar:
                     set_github_sync_success_status()
                 st.toast("✅ 旅遊地點已儲存！")
                 st.rerun()
-    else:
-        st.info(f"📍 {location}" if location else "尚未設定旅遊地點")
 
-    st.divider()
-    st.subheader("🔐 管理員")
-
-    if st.session_state.admin_logged_in:
-        st.success("🔓 管理員已登入")
-
+        st.divider()
+        st.subheader("👥 旅遊名單")
         if st.button("👥 管理旅遊名單", type="primary", use_container_width=True):
             manage_members_dialog()
         elif st.session_state.pop("reopen_manage_members", False):
             manage_members_dialog()
 
-        if st.button("🔒 管理員登出", use_container_width=True):
-            st.session_state.admin_logged_in = False
-            st.session_state.confirm_reset = False
-            st.rerun()
-
-        st.divider()
+    with tab_backup:
         st.subheader("💾 資料備份")
 
         backup_data = export_travel_data()
@@ -1363,7 +1388,7 @@ with st.sidebar:
                             pass
                     st.error(f"❌ 匯入未完成：{e}")
 
-        st.divider()
+    with tab_sync:
         st.subheader("☁️ GitHub 永久資料")
 
         _sync_result = st.session_state.get("github_sync_result")
@@ -1406,7 +1431,7 @@ with st.sidebar:
         else:
             st.warning("⚠️ 尚未設定 GitHub 備份。請在 Streamlit Secrets 加入 [github] 設定。")
 
-        st.divider()
+    with tab_danger:
         st.subheader("🗑️ 資料管理")
 
         with st.popover("🗑️ 清空全部旅遊資料", use_container_width=True):
@@ -1473,30 +1498,6 @@ with st.sidebar:
             st.caption(f"Secrets 名單：{diag['secret_members']} 人")
             if diag.get("db_error"):
                 st.error(f"資料庫診斷失敗：{diag['db_error']}")
-
-    else:
-        st.info("目前為一般使用者模式")
-        admin_input = st.text_input(
-            "管理員密碼",
-            type="password",
-            placeholder="請輸入管理員密碼"
-        )
-        if st.button("🔓 管理員登入", type="primary", use_container_width=True):
-            if not admin_input:
-                st.error("⚠️ 請輸入管理員密碼。")
-            elif not get_admin_password():
-                st.error("⚠️ 尚未設定 [admin] password。")
-            else:
-                admin_ok, admin_msg = verify_admin_password(
-                    admin_input, get_admin_password(),
-                    admin_login_throttle(), time.monotonic())
-                if admin_ok:
-                    st.session_state.admin_logged_in = True
-                    restore_github_sync_status()
-                    st.toast("✅ 管理員登入成功！")
-                    st.rerun()
-                else:
-                    st.error(admin_msg)
 
 
 def compute_travel_totals(df):
@@ -1668,7 +1669,7 @@ def render_stats():
 # 使用者切換時清除表單狀態，避免 A 使用者的 widget 值殘留到 B 使用者。
 st.title("🚌 旅遊哦各位～")
 
-tab1, tab2 = st.tabs(["📝 填寫人數", "📊 旅遊統計"])
+tab1, tab2, tab3 = st.tabs(["📝 填寫人數", "📊 旅遊統計", "🔐 管理員"])
 
 with tab1:
     members = get_members()
@@ -1903,3 +1904,6 @@ with tab1:
 
 with tab2:
     render_stats()
+
+with tab3:
+    render_admin_panel()

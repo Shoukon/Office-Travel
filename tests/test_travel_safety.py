@@ -12,6 +12,7 @@ import sqlite3
 import tempfile
 import unittest
 import urllib
+from unittest.mock import MagicMock
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -303,6 +304,62 @@ class AdminLoginTests(unittest.TestCase):
 
     def test_non_ascii_password_works(self):
         self.assertTrue(self.verify("密碼123", "密碼123", self.throttle, 1.0)[0])
+
+
+class AttrState(dict):
+    __getattr__ = dict.get
+    def __setattr__(self, key, value): self[key] = value
+
+
+class AdminPanelTests(unittest.TestCase):
+    """The admin features live in a main-page tab, not in a sidebar."""
+
+    def build(self, logged_in):
+        st = MagicMock()
+        st.session_state = AttrState(admin_logged_in=logged_in)
+        st.button.return_value = False
+        st.text_input.return_value = ""
+        st.tabs.side_effect = lambda labels: [MagicMock() for _ in labels]
+        stubs = {n: MagicMock() for n in (
+            "get_location", "save_location", "sync_github_backup", "set_github_sync_success_status",
+            "manage_members_dialog", "export_travel_data", "github_is_configured", "get_db",
+            "get_db_path", "get_db_size", "get_db_diagnostics", "import_travel_data", "execute_db",
+            "restore_github_sync_status", "get_admin_password", "verify_admin_password",
+            "admin_login_throttle", "get_github_settings", "taiwan_now")}
+        stubs["export_travel_data"].return_value = {}
+        stubs["get_db_size"].return_value = 0
+        stubs["get_db_path"].return_value = "x.db"
+        stubs["github_is_configured"].return_value = False
+        stubs["get_db_diagnostics"].return_value = {"exists": True, "travel_members": 0,
+            "travel_records": 0, "travel_config": 0, "secret_members": 0, "db_error": ""}
+        stubs["test_github_encryption_key"] = lambda: (True, "")
+        env = load(["render_admin_panel"], st=st, time=SimpleNamespace(monotonic=lambda: 0.0),
+                   json=json, **stubs)
+        return st, env["render_admin_panel"], stubs
+
+    def test_logged_out_shows_only_the_login_form(self):
+        st, render, stubs = self.build(False)
+        render()
+        st.text_input.assert_called_once()
+        self.assertEqual(st.text_input.call_args.kwargs["type"], "password")
+        st.tabs.assert_not_called()
+        st.download_button.assert_not_called()
+        stubs["export_travel_data"].assert_not_called()
+
+    def test_logged_in_shows_the_four_admin_sections(self):
+        st, render, _ = self.build(True)
+        render()
+        labels = st.tabs.call_args.args[0]
+        self.assertEqual(len(labels), 4)
+        for word in ("旅遊設定", "資料備份", "GitHub", "資料管理"):
+            self.assertTrue(any(word in label for label in labels), word)
+
+    def test_sidebar_is_gone_and_admin_tab_is_in_the_main_page(self):
+        text = SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("st.sidebar", text)
+        self.assertIn('"🔐 管理員"', text)
+        self.assertIn("with tab3:\n    render_admin_panel()", text)
+        self.assertIn('initial_sidebar_state="collapsed"', text)
 
 
 if __name__ == "__main__":
