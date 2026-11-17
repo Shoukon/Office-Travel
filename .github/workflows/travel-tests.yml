@@ -34,4 +34,4 @@ jobs:
       - name: Install test dependencies (no production Secrets)
         run: python -m pip install -r requirements-test.txt
       - name: Run travel tests (never starts travel.py)
-        run: python -B -m unittest -q discover -s tests -p "test_*.py"
+        run: python -B -m unittest discover -q -s tests -p "test_*.py"
