@@ -3,8 +3,6 @@
 公司旅遊人數填寫表單（Streamlit）。員工填寫大人／小孩人數，管理員可編輯資料、查看統計，
 資料會加密備份到 GitHub，Streamlit app 重開機後自動還原。
 
-線上網址：https://office-travel-gbilfvtnk6wkuybcvec983.streamlit.app/
-
 ## 檔案
 
 | 檔案 | 用途 |
